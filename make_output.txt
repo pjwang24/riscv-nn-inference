@@ -1,0 +1,56 @@
+verilator --cc --exe --build --trace -Wno-fatal -Dno_cache_mem --top-module riscv_top -I/Users/peter/asic-project-fa25-golden-gates/src \
+		/Users/peter/asic-project-fa25-golden-gates/src/riscv_top.v /Users/peter/asic-project-fa25-golden-gates/src/Riscv151.v /Users/peter/asic-project-fa25-golden-gates/src/Memory151.v /Users/peter/asic-project-fa25-golden-gates/src/no_cache_mem.v /Users/peter/asic-project-fa25-golden-gates/src/ExtMemModel.v /Users/peter/asic-project-fa25-golden-gates/src/Execute.sv /Users/peter/asic-project-fa25-golden-gates/src/Fetch.sv /Users/peter/asic-project-fa25-golden-gates/src/Writeback.sv /Users/peter/asic-project-fa25-golden-gates/src/Control_logic.sv /Users/peter/asic-project-fa25-golden-gates/src/RegFile.sv /Users/peter/asic-project-fa25-golden-gates/src/ALU.v /Users/peter/asic-project-fa25-golden-gates/src/ALUdec.v /Users/peter/asic-project-fa25-golden-gates/src/Branch_Comp.v /Users/peter/asic-project-fa25-golden-gates/src/BranchPrediction.v /Users/peter/asic-project-fa25-golden-gates/src/riscv_arbiter.v /Users/peter/asic-project-fa25-golden-gates/src/Multiplier.sv /Users/peter/asic-project-fa25-golden-gates/src/Opcode.vh \
+		sim_main.cpp
+c++  -I.  -MMD -I/opt/homebrew/Cellar/verilator/5.044/share/verilator/include -I/opt/homebrew/Cellar/verilator/5.044/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=1 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=1 -DVM_TRACE_SAIF=0 -faligned-new -fbracket-depth=4096 -fcf-protection=none -Xclang -fno-pch-timestamp -Qunused-arguments -Wno-bool-operation -Wno-c++11-narrowing -Wno-constant-logical-operand -Wno-int-in-bool-context -Wno-non-pod-varargs -Wno-parentheses-equality -Wno-shadow -Wno-sign-compare -Wno-tautological-bitwise-compare -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable -Wno-vla-cxx-extension      -Os  -c -o sim_main.o ../sim_main.cpp
+../sim_main.cpp:151:10: error: no member named 'riscv_top' in 'Vriscv_top'
+  151 |     top->riscv_top->mem->icache->ram[addr][0] = words[0];
+      |     ~~~  ^
+../sim_main.cpp:152:10: error: no member named 'riscv_top' in 'Vriscv_top'
+  152 |     top->riscv_top->mem->icache->ram[addr][1] = words[1];
+      |     ~~~  ^
+../sim_main.cpp:153:10: error: no member named 'riscv_top' in 'Vriscv_top'
+  153 |     top->riscv_top->mem->icache->ram[addr][2] = words[2];
+      |     ~~~  ^
+../sim_main.cpp:154:10: error: no member named 'riscv_top' in 'Vriscv_top'
+  154 |     top->riscv_top->mem->icache->ram[addr][3] = words[3];
+      |     ~~~  ^
+../sim_main.cpp:156:10: error: no member named 'riscv_top' in 'Vriscv_top'
+  156 |     top->riscv_top->mem->dcache->ram[addr][0] = words[0];
+      |     ~~~  ^
+../sim_main.cpp:157:10: error: no member named 'riscv_top' in 'Vriscv_top'
+  157 |     top->riscv_top->mem->dcache->ram[addr][1] = words[1];
+      |     ~~~  ^
+../sim_main.cpp:158:10: error: no member named 'riscv_top' in 'Vriscv_top'
+  158 |     top->riscv_top->mem->dcache->ram[addr][2] = words[2];
+      |     ~~~  ^
+../sim_main.cpp:159:10: error: no member named 'riscv_top' in 'Vriscv_top'
+  159 |     top->riscv_top->mem->dcache->ram[addr][3] = words[3];
+      |     ~~~  ^
+../sim_main.cpp:194:15: warning: format specifies type 'unsigned long' but the argument has type 'uint64_t' (aka 'unsigned long long') [-Wformat]
+  193 |       fprintf(stderr, "*** PASSED *** after %lu simulation cycles\n",
+      |                                             ~~~
+      |                                             %llu
+  194 |               cycle_count);
+      |               ^~~~~~~~~~~
+../sim_main.cpp:200:24: warning: format specifies type 'unsigned long' but the argument has type 'uint64_t' (aka 'unsigned long long') [-Wformat]
+  199 |               "*** FAILED *** (tohost = %d) after %lu simulation cycles\n",
+      |                                                   ~~~
+      |                                                   %llu
+  200 |               csr_val, cycle_count);
+      |                        ^~~~~~~~~~~
+../sim_main.cpp:212:13: warning: format specifies type 'unsigned long' but the argument has type 'uint64_t' (aka 'unsigned long long') [-Wformat]
+  211 |     fprintf(stderr, "*** TIMEOUT *** after %lu simulation cycles\n",
+      |                                            ~~~
+      |                                            %llu
+  212 |             cycle_count);
+      |             ^~~~~~~~~~~
+../sim_main.cpp:215:42: warning: format specifies type 'unsigned long' but the argument has type 'uint64_t' (aka 'unsigned long long') [-Wformat]
+  215 |   fprintf(stderr, "Total cycles: %lu\n", cycle_count);
+      |                                  ~~~     ^~~~~~~~~~~
+      |                                  %llu
+4 warnings and 8 errors generated.
+make[1]: *** [sim_main.o] Error 1
+%Error: 'make -C obj_dir -f Vriscv_top.mk -j 1' exited with 2
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.044 for more assistance.
+%Error: Command Failed /opt/homebrew/Cellar/verilator/5.044/bin/verilator_bin --cc --exe --build --trace -Wno-fatal -Dno_cache_mem --top-module riscv_top -I/Users/peter/asic-project-fa25-golden-gates/src /Users/peter/asic-project-fa25-golden-gates/src/riscv_top.v /Users/peter/asic-project-fa25-golden-gates/src/Riscv151.v /Users/peter/asic-project-fa25-golden-gates/src/Memory151.v /Users/peter/asic-project-fa25-golden-gates/src/no_cache_mem.v /Users/peter/asic-project-fa25-golden-gates/src/ExtMemModel.v /Users/peter/asic-project-fa25-golden-gates/src/Execute.sv /Users/peter/asic-project-fa25-golden-gates/src/Fetch.sv /Users/peter/asic-project-fa25-golden-gates/src/Writeback.sv /Users/peter/asic-project-fa25-golden-gates/src/Control_logic.sv /Users/peter/asic-project-fa25-golden-gates/src/RegFile.sv /Users/peter/asic-project-fa25-golden-gates/src/ALU.v /Users/peter/asic-project-fa25-golden-gates/src/ALUdec.v /Users/peter/asic-project-fa25-golden-gates/src/Branch_Comp.v /Users/peter/asic-project-fa25-golden-gates/src/BranchPrediction.v /Users/peter/asic-project-fa25-golden-gates/src/riscv_arbiter.v /Users/peter/asic-project-fa25-golden-gates/src/Multiplier.sv /Users/peter/asic-project-fa25-golden-gates/src/Opcode.vh sim_main.cpp
+make: *** [obj_dir/Vriscv_top] Error 2
