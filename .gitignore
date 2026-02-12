@@ -1,0 +1,9 @@
+# Build artifacts
+obj_dir/
+*.elf
+*.bin
+*.hex
+*.dump
+
+# OS files
+.DS_Store
