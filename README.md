@@ -243,3 +243,9 @@ The no-cache vs. cache configuration directly impacts ML performance. No-cache m
 - **CNNs** — 2D convolution via im2col + matmul
 - **CIFAR-10** — more complex image classification
 - **Mixed precision** — INT16 first layer, INT8 deeper layers
+
+---
+
+## Acknowledgments
+
+Special thanks to **Tingyao Huang** for his contributions to the design and development of the RISC-V CPU core used in this project.
