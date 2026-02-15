@@ -10,7 +10,7 @@ LINKER_LD   = /Users/peter/verilator/inference.ld
 # ---- RISC-V toolchain ----
 RISCV       = riscv64-unknown-elf
 GCC_OPTS    = -march=rv32im_zicsr -mabi=ilp32 -static -mcmodel=medany \
-              -fvisibility=hidden -nostdlib -nostartfiles -Wl,--build-id=none -O2
+              -fvisibility=hidden -nostdlib -nostartfiles -Wl,--build-id=none -O3
 
 # ---- Verilator settings ----
 VERILATOR   = verilator
@@ -18,7 +18,8 @@ VFLAGS      = --cc --exe --build --trace \
               -Wno-fatal \
               -Dno_cache_mem \
               --top-module riscv_top \
-              -I$(RTL_DIR)
+              -I$(RTL_DIR) \
+              -I/Users/peter/verilator/riscv-accelerator
 
 # ---- RTL source files ----
 RTL_SRCS = \
@@ -38,7 +39,8 @@ RTL_SRCS = \
 	$(RTL_DIR)/BranchPrediction.v \
 	$(RTL_DIR)/riscv_arbiter.v \
 	$(RTL_DIR)/Multiplier.sv \
-	$(RTL_DIR)/Opcode.vh
+	$(RTL_DIR)/Opcode.vh \
+	/Users/peter/verilator/riscv-accelerator/MatmulAccelerator.sv
 
 # ---- Targets ----
 .PHONY: all compile_rtl compile_inference run clean
