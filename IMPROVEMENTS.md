@@ -52,24 +52,24 @@ A DMA-based, 4-lane, weight-stationary INT8 matmul accelerator that shares the d
 #### Accelerator Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│  MatmulAccelerator  (MMIO @ 0x80000000)         │
-│                                                 │
-│   ┌──────────┐  ┌──────────────────────────┐    │
-│   │  Config   │  │   DMA Engine              │    │
-│   │  Regs     │  │  IDLE → LOAD_W → COMPUTE │    │
-│   │  W_ADDR   │  │       → DONE             │    │
-│   │  X_ADDR   │  └──────────┬───────────────┘    │
-│   │  M/N_DIM  │             │                    │
-│   └──────────┘     ┌───────▼───────┐            │
-│                    │  Weight SRAMs  │            │
-│   ┌──────────┐     │  256w × 4 lanes│            │
-│   │ RESULT0  │◄────┤               │            │
-│   │ RESULT1  │◄────┤  Packed INT8   │            │
-│   │ RESULT2  │◄────┤  MAC Array     │            │
-│   │ RESULT3  │◄────┤  (4 lanes)     │            │
-│   └──────────┘     └───────────────┘            │
-└─────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────┐
+│  MatmulAccelerator  (MMIO @ 0x80000000)        │
+│                                                │
+│   ┌──────────┐  ┌──────────────────────────┐   │
+│   │  Config  │  │   DMA Engine             │   │
+│   │  Regs    │  │  IDLE → LOAD_W → COMPUTE │   │
+│   │  W_ADDR  │  │       → DONE             │   │
+│   │  X_ADDR  │  └──────────┬───────────────┘   │
+│   │  M/N_DIM │             │                   │
+│   └──────────┘     ┌───────▼───────┐           │
+│                    │  Weight SRAMs │           │
+│   ┌──────────┐     │ 256w × 4 lanes│           │
+│   │ RESULT0  │◄────┤               │           │
+│   │ RESULT1  │◄────┤  Packed INT8  │           │
+│   │ RESULT2  │◄────┤  MAC Array    │           │
+│   │ RESULT3  │◄────┤  (4 lanes)    │           │
+│   └──────────┘     └───────────────┘           │
+└────────────────────────────────────────────────┘
 ```
 
 #### MMIO Register Map
