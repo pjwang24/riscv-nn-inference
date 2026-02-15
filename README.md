@@ -1,27 +1,121 @@
 # Bare-Metal Neural Network Inference on a Custom RISC-V Processor
 
-> End-to-end ML inference on a 3-stage pipelined RV32IM core, verified via cycle-accurate Verilator simulation.
+> End-to-end ML inference on a 3-stage pipelined RV32IM core with a custom matmul accelerator, verified via cycle-accurate Verilator simulation.
 
 ## Key Results
 
 | Metric | Value |
 |--------|-------|
 | ISA | RV32IM (Integer + Multiply/Divide) |
-| Simulation cycles | **48,886,157** (~48.9M) |
-| Test images | 100 (MNIST digits) |
-| Inference result | **PASSED** (all predictions correct) |
-| Binary size | ~178 KB (780 B code + 177 KB weights/data) |
+| Accelerator | 4-lane DMA-based INT8 matmul engine |
+| Simulation cycles | **6,698,993** (~6.7M) |
+| Speedup vs. unoptimized baseline | **7.30×** (from 48.9M) |
+| Test images | 100 (MNIST handwritten digits) |
+| Inference result | **PASSED** (all predictions correct, 97% accuracy) |
+| Binary size | ~178 KB (code + weights + test data) |
+
+---
+
+## How It Works: From Training to Silicon
+
+This section explains how a neural network trained on a laptop ends up running on a custom CPU — something that looks like magic until you see the pipeline.
+
+### The Big Picture
+
+```
+ ┌─────────────┐     ┌──────────────┐     ┌────────────────┐     ┌─────────────────┐
+ │  1. TRAIN   │────▶│  2. EXPORT   │────▶│  3. COMPILE    │────▶│  4. SIMULATE    │
+ │  (PyTorch)  │     │  (Python→C)  │     │  (RISC-V GCC)  │     │  (Verilator)    │
+ │             │     │              │     │                │     │                 │
+ │ float32     │     │ int8 arrays  │     │ flat binary    │     │ clock-by-clock  │
+ │ model.pth   │     │ weights.h    │     │ inference.hex  │     │ CPU execution   │
+ └─────────────┘     └──────────────┘     └────────────────┘     └─────────────────┘
+```
+
+### Step 1: Train the Model (Python / PyTorch)
+
+A simple 2-layer MLP is trained on the MNIST handwritten digit dataset using standard PyTorch:
+
+```
+Input (784 pixels) → FC1 (128 neurons) → ReLU → FC2 (10 classes) → Argmax → digit 0–9
+```
+
+At this point, the model's "knowledge" lives in its **weight matrices** — two big tables of floating-point numbers (e.g., `fc1.weight` is a 128×784 matrix of `float32` values). These weights encode the patterns the network learned during training.
+
+### Step 2: Quantize and Export (Python → C Header Files)
+
+Our RISC-V CPU has **no floating-point hardware** — it only understands integers. So we need to convert the model:
+
+1. **Quantize**: Each float32 weight is scaled and rounded to `int8` (−128 to +127). This loses a tiny bit of precision but reduces storage by 4× and enables fast integer math.
+
+2. **Export as C arrays**: The quantized weights are written directly into C header files as constant arrays:
+
+   ```c
+   // weights.h (auto-generated)
+   const int8_t fc1_weight[100352] = { -5, 0, -3, -2, 3, -1, 1, ... };
+   const int32_t fc1_bias[128] = { -170, 308, 38, ... };
+   ```
+
+   Similarly, 100 test images and their expected labels are exported to `test_images.h`.
+
+> **Key insight:** The weights aren't "loaded" at runtime from a file system — there is no file system. They are **baked directly into the program binary** as constant data, just like hardcoded lookup tables.
+
+### Step 3: Cross-Compile (RISC-V GCC → Hex File)
+
+The C inference code (`inference_bare.c`) `#include`s the weight headers. When compiled, the weights become part of the program's `.rodata` section:
+
+```
+inference_bare.c  ─┐
+weights.h          ├──▶ riscv-gcc ──▶ inference.elf ──▶ inference.bin ──▶ inference.hex
+test_images.h      │         ▲
+start.s           ─┘         │
+                       linker script (base address 0x2000)
+```
+
+The linker script places everything — code, weights, and test images — into a single contiguous memory region starting at address `0x2000`. The final `.hex` file is a flat dump of this memory image, formatted as 128-bit hex lines.
+
+**What's in the binary:**
+| Section | Content | Size |
+|---------|---------|------|
+| `.text` | Inference code (matmul, ReLU, argmax, etc.) | ~780 B |
+| `.rodata` | FC1 weights (128×784) | ~98 KB |
+| `.rodata` | FC2 weights (10×128), biases | ~2 KB |
+| `.rodata` | 100 test images (100×784) | ~77 KB |
+
+### Step 4: Simulate (Verilator)
+
+The Verilator testbench (`sim_main.cpp`) acts like a "bootloader" — it writes the hex file directly into the processor's simulated SRAM:
+
+```cpp
+// Pseudocode from sim_main.cpp
+for each line in inference.hex:
+    memory[addr] = parse_128bit_hex(line);  // icache + dcache
+    addr++;
+```
+
+After loading, the CPU boots from address `0x2000` and begins executing the inference code. From the CPU's perspective, the weights are just bytes sitting in memory at known addresses — the same way an embedded system would have firmware data burned into ROM.
+
+### Why This Works
+
+There's no operating system, no file I/O, no dynamic memory allocation. The entire "deployment" is:
+
+1. Trained model weights → constant C arrays → compiled into the binary → loaded into RAM
+2. CPU reads weights from RAM addresses, multiplies them with input pixels, and produces predictions
+3. The matmul accelerator reads the same weight data via DMA from the same RAM
+
+The key realization: **a neural network is just arithmetic on arrays.** Once you have the weights in memory and code that knows the array dimensions, you can run inference on anything — from a datacenter GPU to a bare-metal RISC-V core.
 
 ---
 
 ## Project Overview
 
-This project demonstrates a quantized two-layer neural network (MLP) running entirely as bare-metal C on a custom RISC-V processor. The pipeline spans:
+This project demonstrates a quantized two-layer neural network (MLP) running entirely as bare-metal C on a custom RISC-V processor with a purpose-built matmul accelerator. The pipeline spans:
 
 1. **Model Training** — PyTorch MLP trained on MNIST, exported with INT8 weight quantization
 2. **Bare-Metal C** — Fixed-point inference code compiled with `-nostdlib` for the RV32IM target
-3. **RTL Design** — 3-stage pipelined CPU with hardware multiply, branch prediction, and CSR support
-4. **Verilator Simulation** — Cycle-accurate verification of the full hardware–software stack
+3. **HW Accelerator** — DMA-based 4-lane INT8 matmul engine with MMIO interface
+4. **RTL Design** — 3-stage pipelined CPU with hardware multiply, branch prediction, and CSR support
+5. **Verilator Simulation** — Cycle-accurate verification of the full hardware–software stack
 
 ---
 
@@ -41,8 +135,9 @@ This project demonstrates a quantized two-layer neural network (MLP) running ent
 
 ### Branch Prediction
 
-- **128-entry BHT** with 2-bit saturating counters
-- **128-entry BTB** for target address prediction
+- **256-entry BHT** with 2-bit saturating counters
+- **256-entry BTB** for target address prediction
+- Trains on both branches and jumps (JAL/JALR)
 - Mispredict correction from the execute stage
 
 ### M-Extension (Hardware Multiply/Divide)
@@ -56,7 +151,16 @@ Single-cycle combinational unit supporting all 8 RV32M instructions:
 | `DIV` / `DIVU` | Signed / unsigned division |
 | `REM` / `REMU` | Signed / unsigned remainder |
 
-The M-extension is critical for this workload — matrix multiplication dominates inference time. Without hardware multiply, each `mul` would require multi-cycle software emulation.
+### Matmul Accelerator
+
+A DMA-based, 4-lane, weight-stationary INT8 matmul engine mapped at `0x80000000`:
+
+- **4 MAC lanes** with 256-word weight SRAMs — process 4 output neurons in parallel
+- **Packed INT8 dot-product** — 4 byte multiplies per clock per lane (16 MACs/cycle)
+- **DMA engine** — reads weights and inputs directly from data memory
+- **CPU integration** — shares dcache port via address-decoded mux; CPU core is unmodified
+
+The CPU writes weight/input addresses and dimensions to MMIO registers, triggers the accelerator, polls for completion, and reads the 4 accumulated INT32 results.
 
 ### Data Forwarding
 
@@ -123,7 +227,7 @@ Input (784) ──▶ FC1 (128) ──▶ ReLU ──▶ Rescale ──▶ FC2 (
 - Compiled with `-nostdlib -nostartfiles` (no OS, no libc)
 - Custom `memset` provided in-source
 - Results reported via inline assembly CSR writes
-- Inner matmul loop unrolled 4× for ILP
+- Matmul offloaded to hardware accelerator via MMIO
 
 ---
 
@@ -150,26 +254,35 @@ make run                  # Execute simulation
 ### Expected Output
 
 ```
-Loaded 11386 lines from inference.hex
-*** PASSED *** after 48886157 simulation cycles
-Total cycles: 48886157
+Loaded 11398 lines from inference.hex
+*** PASSED *** after 6698993 simulation cycles
+Total cycles: 6698993
 ```
 
 ---
 
 ## Performance Analysis
 
-At ~48.9M total cycles for 100 images:
+### Optimization History
+
+| Stage | Cycles | Speedup |
+|-------|--------|---------|
+| Original baseline (unoptimized) | 48,886,157 | 1.00× |
+| + Software optimizations (reciprocal multiply, loop unrolling, fused kernels, `-O3`) | 44,830,519 | 1.09× |
+| + Pipeline improvements (jump bubble fix, larger BHT/BTB) | 44,830,278 | 1.09× |
+| + **Matmul accelerator** | **6,698,993** | **7.30×** |
+
+See [IMPROVEMENTS.md](IMPROVEMENTS.md) for detailed change-by-change analysis.
+
+### Cycle Breakdown
+
+At ~6.7M total cycles for 100 images (~67K cycles/image):
 
 | Metric | Value |
 |--------|-------|
 | MACs per image | ~101,632 (FC1: 100,352 + FC2: 1,280) |
 | Total MACs | ~10.16M |
-| Effective throughput | **~4.8 cycles/MAC** |
-| `mul` instructions in binary | 14 |
-| `div` instructions in binary | 1 |
-
-The ~4.8 cycles/MAC includes all overhead: loop control, data loads/stores, bias addition, ReLU, rescaling, and argmax.
+| Effective throughput | **~0.66 cycles/MAC** |
 
 ---
 
@@ -179,13 +292,16 @@ The ~4.8 cycles/MAC includes all overhead: loop control, data loads/stores, bias
 verilator/
 ├── Makefile              # Build orchestration
 ├── sim_main.cpp          # Verilator testbench (hex loading, reset, CSR monitoring)
-├── inference_bare.c      # Bare-metal MLP inference
+├── inference_bare.c      # Bare-metal MLP inference (MMIO accelerator calls)
 ├── inference.ld          # Linker script (base address 0x2000)
 ├── bin2hex.py            # Binary-to-hex converter (128-bit width)
-└── README.md
+├── IMPROVEMENTS.md       # Optimization log with cycle measurements
+├── README.md
+└── riscv-accelerator/
+    └── MatmulAccelerator.sv  # 4-lane DMA matmul accelerator
 
 asic-project-fa25-golden-gates/src/
-├── riscv_top.v           # Top-level module
+├── riscv_top.v           # Top-level module (CPU + memory + accelerator mux)
 ├── Riscv151.v            # CPU core (pipeline integration)
 ├── Fetch.sv              # Fetch stage + branch prediction
 ├── Execute.sv            # Execute stage (ALU, multiplier, forwarding)
@@ -200,9 +316,12 @@ asic-project-fa25-golden-gates/src/
 ├── Branch_Comp.v         # Branch comparator
 └── const.vh / Opcode.vh  # Constants and opcode definitions
 
-riscv-ml-inference/runtime/
-├── weights.h             # Quantized INT8 weights and INT32 biases
-└── test_images.h         # 100 MNIST test images + expected labels
+riscv-ml-inference/
+├── train/
+│   └── train_and_export.py  # PyTorch training + INT8 quantization + C export
+└── runtime/
+    ├── weights.h             # Quantized INT8 weights and INT32 biases
+    └── test_images.h         # 100 MNIST test images + expected labels
 ```
 
 ---
@@ -211,36 +330,38 @@ riscv-ml-inference/runtime/
 
 ### RISC-V for Edge ML
 
-This project shows that a **minimal RISC-V core** — no FPU, no OS, no ML accelerator — can run real neural network inference. The open ISA enables:
-- **Custom extensions** — MAC instructions, SIMD, or tightly-coupled accelerators
+This project shows that a **minimal RISC-V core** with a purpose-built accelerator can run real neural network inference at high throughput. The open ISA enables:
+- **Custom accelerators** — the matmul engine provides a 7.3× speedup without modifying the CPU core
 - **Area optimization** — remove unused features, add domain-specific hardware
-- **Full-stack verification** — processor + memory + software in one simulation
+- **Full-stack verification** — processor + accelerator + memory + software in one simulation
 
-### Memory Architecture as a Design Variable
+### Co-Design in Action
 
-The no-cache vs. cache configuration directly impacts ML performance. No-cache mode provides deterministic single-cycle access but requires large on-chip SRAM. Cache mode is area-efficient but introduces miss penalties that disproportionately affect weight-dominated workloads.
+The optimization journey (48.9M → 6.7M cycles) demonstrates the value of hardware-software co-design:
+- Software optimizations alone yielded only 8% improvement
+- Pipeline changes contributed negligibly for this workload
+- The accelerator — designed specifically for the bottleneck — delivered an **85% reduction**
 
 ---
 
 ## Future Work
 
-### Hardware
-- **Fused MAC instruction** — `mul` + `add` in one cycle (~2× matmul throughput)
-- **INT8 SIMD** — 4 parallel INT8 multiplies per 32-bit register (~4× throughput)
-- **Systolic array** — small matrix engine for 16–64× dense matmul acceleration
-- **Performance counters** — cycle/instruction/misprediction/miss CSRs
+### Accelerator
+- **Pipelined DMA** — overlap weight loading with computation (1 cycle/word instead of 2)
+- **Wider MAC array** — 8 or 16 lanes for larger tile sizes
+- **Double-buffered SRAMs** — load next tile's weights while computing current tile
+- **Systolic array** — 2D dataflow for higher utilization
 
-### Memory
+### Hardware
+- **Performance counters** — cycle/instruction/misprediction CSRs for profiling
 - **Cache mode benchmarking** — measure real miss rates for this workload
-- **Scratchpad + DMA** — software-managed tiling with overlapped data movement
 
 ### Software
-- **Weight tiling** — cache-friendly 16×16 block matmul
-- **Fused kernels** — merge ReLU/rescaling into matmul output loop
-- **Deeper unrolling** — 8× or 16× with register blocking
+- **Tiled FC2** — handle non-multiple-of-4 output dimensions more efficiently
+- **Activation pipelining** — overlap bias/ReLU/rescale with next tile's matmul
 
 ### Model
-- **CNNs** — 2D convolution via im2col + matmul
+- **CNNs** — 2D convolution via im2col + matmul on the accelerator
 - **CIFAR-10** — more complex image classification
 - **Mixed precision** — INT16 first layer, INT8 deeper layers
 
@@ -249,3 +370,5 @@ The no-cache vs. cache configuration directly impacts ML performance. No-cache m
 ## Acknowledgments
 
 Special thanks to **Tingyao Huang** for his contributions to the design and development of the RISC-V CPU core used in this project.
+
+
