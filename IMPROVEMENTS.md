@@ -56,7 +56,7 @@ A DMA-based, 4-lane, weight-stationary INT8 matmul accelerator that shares the d
 │  MatmulAccelerator  (MMIO @ 0x80000000)        │
 │                                                │
 │   ┌──────────┐  ┌──────────────────────────┐   │
-│   │  Config  │  │   DMA Engine             │   │
+│   │  Config  │  │       DMA Engine         │   │
 │   │  Regs    │  │  IDLE → LOAD_W → COMPUTE │   │
 │   │  W_ADDR  │  │       → DONE             │   │
 │   │  X_ADDR  │  └──────────┬───────────────┘   │
