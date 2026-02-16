@@ -36,7 +36,7 @@ module MatmulAccelerator (
     // --- DMA interface (directly drives dcache port when active) ---
     output reg [31:0] dma_addr,     // address to read from data memory
     output reg        dma_re,       // read enable for data memory
-    input wire [31:0] dma_rdata,    // data from data memory
+    input wire [127:0] dma_rdata,   // data from data memory (128-bit wide)
 
     // --- Control ---
     output wire       accel_busy    // 1 when accelerator owns dcache port
@@ -56,7 +56,7 @@ module MatmulAccelerator (
     localparam S_COMP_WAIT   = 3'd4;  // wait for read response
     localparam S_DONE        = 3'd5;
 
-    reg [2:0]  state;
+    reg [3:0]  state;
     reg        done_flag;
 
     // ---- DMA counters ----
@@ -104,6 +104,8 @@ module MatmulAccelerator (
     end
 
     // ---- State machine ----
+    reg [95:0] x_buffer; // Buffer for remaining 3 words of 128-bit input
+
     always @(posedge clk) begin
         if (reset) begin
             state      <= S_IDLE;
@@ -118,6 +120,7 @@ module MatmulAccelerator (
             lane_cnt   <= 0;
             x_word_cnt <= 0;
             n_words    <= 0;
+            x_buffer   <= 0;
         end else begin
             case (state)
                 S_IDLE: begin
@@ -132,24 +135,34 @@ module MatmulAccelerator (
                         end
                         if (mmio_wdata[0]) begin
                             // Start
-                            state      <= S_LOAD_W;
                             done_flag  <= 0;
                             n_words    <= cfg_n_dim >> 2;
                             w_word_cnt <= 0;
                             lane_cnt   <= 0;
-                            acc_0      <= 0;
-                            acc_1      <= 0;
-                            acc_2      <= 0;
-                            acc_3      <= 0;
-                            // Start first weight read
-                            dma_addr   <= cfg_w_addr;
-                            dma_re     <= 1;
+                            
+                            // Check for Skip Load (Bit 2)
+                            if (mmio_wdata[2]) begin
+                                state      <= S_COMPUTE;
+                                x_word_cnt <= 0;
+                                dma_addr   <= cfg_x_addr;
+                                dma_re     <= 1;
+                            end else begin
+                                state      <= S_LOAD_W;
+                                // Reset accumulators on new load? (Optional, but usually yes for new op)
+                                acc_0      <= 0;
+                                acc_1      <= 0;
+                                acc_2      <= 0;
+                                acc_3      <= 0;
+                                // Start first weight read
+                                dma_addr   <= cfg_w_addr;
+                                dma_re     <= 1;
+                            end
                         end
                     end
                 end
 
                 // ---- Weight Loading Phase ----
-                // Read N/4 words per lane × M lanes (up to 4)
+                // Read 128 bits (4 words) at a time, distributing to Lanes 0-3
                 S_LOAD_W: begin
                     // We issued a read last cycle, now wait for response
                     dma_re <= 0;
@@ -157,78 +170,98 @@ module MatmulAccelerator (
                 end
 
                 S_LOAD_W_WAIT: begin
-                    // Response arrives this cycle (1-cycle memory)
-                    // Store into appropriate lane SRAM
-                    case (lane_cnt)
-                        2'd0: w_sram_0[w_word_cnt] <= dma_rdata;
-                        2'd1: w_sram_1[w_word_cnt] <= dma_rdata;
-                        2'd2: w_sram_2[w_word_cnt] <= dma_rdata;
-                        2'd3: w_sram_3[w_word_cnt] <= dma_rdata;
-                    endcase
+                    // Response arrives this cycle (fixed latency)
+                    // Write to all 4 lanes simultaneously
+                    w_sram_0[w_word_cnt] <= dma_rdata[31:0];
+                    w_sram_1[w_word_cnt] <= dma_rdata[63:32];
+                    w_sram_2[w_word_cnt] <= dma_rdata[95:64];
+                    w_sram_3[w_word_cnt] <= dma_rdata[127:96];
 
                     // Advance to next word
                     if (w_word_cnt + 1 == n_words) begin
-                        // Done with this lane
-                        w_word_cnt <= 0;
-                        if (lane_cnt + 1 == cfg_m_dim[1:0] ||
-                            lane_cnt == 2'd3) begin
-                            // All lanes loaded, start compute
-                            state      <= S_COMPUTE;
-                            x_word_cnt <= 0;
-                            dma_addr   <= cfg_x_addr;
-                            dma_re     <= 1;
-                        end else begin
-                            // Next lane
-                            lane_cnt   <= lane_cnt + 1;
-                            dma_addr   <= cfg_w_addr + ((lane_cnt + 1) * cfg_n_dim);
-                            dma_re     <= 1;
-                            state      <= S_LOAD_W;
-                        end
+                        // All weights loaded
+                        state      <= S_COMPUTE;
+                        x_word_cnt <= 0;
+                        dma_addr   <= cfg_x_addr;
+                        dma_re     <= 1;
                     end else begin
-                        // Next word in same lane
+                        // Next set of 4 words
                         w_word_cnt <= w_word_cnt + 1;
-                        dma_addr   <= cfg_w_addr + (lane_cnt * cfg_n_dim) + ((w_word_cnt + 1) << 2);
+                        dma_addr   <= dma_addr + 16; // Increment by 16 bytes
                         dma_re     <= 1;
                         state      <= S_LOAD_W;
                     end
                 end
 
                 // ---- Compute Phase ----
-                // Read input words, MAC with stored weights
+                // Read 128-bit input (4 words), consume over 4 cycles
                 S_COMPUTE: begin
                     dma_re <= 0;
                     state  <= S_COMP_WAIT;
                 end
 
-                S_COMP_WAIT: begin
-                    // Input word arrived — do 4 MACs per lane
-                    // Unpack input bytes (little-endian)
-                    // dma_rdata = [byte3, byte2, byte1, byte0]
+                S_COMP_WAIT: begin // Process Word 0
+                    // dma_rdata has [Word3, Word2, Word1, Word0]
+                    // Buffer Word1-3
+                    x_buffer <= dma_rdata[127:32];
+                    
+                    // MAC with Word 0
+                    acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], dma_rdata[31:0]);
+                    if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], dma_rdata[31:0]);
+                    if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], dma_rdata[31:0]);
+                    if (cfg_m_dim > 3) acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], dma_rdata[31:0]);
 
-                    // Read weights from SRAMs for this position
-                    // w_sram_X[x_word_cnt] was stored during load phase
+                    x_word_cnt <= x_word_cnt + 1;
+                    state <= 3'd6; // S_COMP_1 (Need new state constant)
+                end
 
-                    // Perform packed INT8 dot product for each active lane
-                    acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], dma_rdata);
-                    if (cfg_m_dim > 1)
-                        acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], dma_rdata);
-                    if (cfg_m_dim > 2)
-                        acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], dma_rdata);
-                    if (cfg_m_dim > 3)
-                        acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], dma_rdata);
+                3'd6: begin // S_COMP_1: Process Word 1
+                    acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], x_buffer[31:0]);
+                    if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], x_buffer[31:0]);
+                    if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], x_buffer[31:0]);
+                    if (cfg_m_dim > 3) acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], x_buffer[31:0]);
+
+                    x_buffer <= x_buffer >> 32;
+                    x_word_cnt <= x_word_cnt + 1;
+                    state <= 3'd7; // S_COMP_2
+                end
+
+                3'd7: begin // S_COMP_2: Process Word 2
+                    acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], x_buffer[31:0]);
+                    if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], x_buffer[31:0]);
+                    if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], x_buffer[31:0]);
+                    if (cfg_m_dim > 3) acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], x_buffer[31:0]);
+
+                    x_buffer <= x_buffer >> 32;
+                    x_word_cnt <= x_word_cnt + 1;
+                    state <= 3'd4; // S_COMP_3 (Reuse COMP_WAIT? No) -> Use new state S_COMP_3? 
+                                   // Let's use 3'd4 was S_COMP_WAIT.
+                                   // I need more states. Range is [2:0] (8 states).
+                                   // S_IDLE=0, LOAD=1, LOAD_W=2, COMP=3, COMP_W=4, DONE=5.
+                                   // I have 6 states. 0,1,2,3,4,5.
+                                   // I need COMP_1, COMP_2, COMP_3.
+                                   // Total 9 states. 3 bits is not enough.
+                                   // **ACTION**: Expand state register to 4 bits.
+                    state <= 4'd8; // S_COMP_3
+                 end
+                
+                 4'd8: begin // S_COMP_3
+                    acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], x_buffer[31:0]);
+                    if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], x_buffer[31:0]);
+                    if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], x_buffer[31:0]);
+                    if (cfg_m_dim > 3) acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], x_buffer[31:0]);
 
                     if (x_word_cnt + 1 == n_words) begin
-                        // All input words processed
                         state     <= S_DONE;
                         done_flag <= 1;
                         dma_re    <= 0;
                     end else begin
-                        x_word_cnt <= x_word_cnt + 1;
-                        dma_addr   <= cfg_x_addr + ((x_word_cnt + 1) << 2);
-                        dma_re     <= 1;
-                        state      <= S_COMPUTE;
+                         x_word_cnt <= x_word_cnt + 1;
+                         dma_addr   <= dma_addr + 16;
+                         dma_re     <= 1;
+                         state      <= S_COMPUTE;
                     end
-                end
+                 end
 
                 S_DONE: begin
                     dma_re <= 0;

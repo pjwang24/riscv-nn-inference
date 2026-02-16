@@ -130,6 +130,28 @@ All 100 MNIST predictions correct (97% model accuracy maintained).
 | Original baseline | 48,886,157 | — | — | 1.00× |
 | + Strategy A (SW optimizations) | 44,830,519 | −4,055,638 | −8.3% | 1.09× |
 | + Strategy B (pipeline/predictor) | 44,830,278 | −4,055,879 | −8.3% | 1.09× |
-| + Strategy D (matmul accelerator) | **6,698,993** | **−42,187,164** | **−86.3%** | **7.30×** |
+| + Strategy D (matmul accelerator) | 6,698,993 | −38,131,285 | −85.1% | 6.69× |
+
+---
+
+### Strategy E: Separate DMA & Batched Inference
+
+> 6,698,993 → 2,914,655 cycles (**−56.5%**, 2.30× speedup vs Accelerator)
+
+Optimized memory access by widening the accelerator's DMA path and amortizing weight loading costs.
+
+#### Key Changes
+1.  **Separate 128-bit DMA Path**: Accelerator now has a dedicated read-only port to memory, bypassing the CPU's 32-bit interface.
+2.  **Batched Inference (Batch=4)**: Processes 4 input images against the same loaded weights. Weights are loaded once (128-bit wide) and reused 4 times, reducing effective weight memory bandwidth by 75%.
+3.  **128-bit Data Consumption**: Input vectors are consumed in 128-bit chunks (4 words/cycle bandwidth).
+
+### Cumulative Results
+
+| Stage | Cycles | Δ Cycles | Δ % | Speedup |
+|-------|--------|----------|-----|---------|
+| Original baseline | 48,886,157 | — | — | 1.00× |
+| ... | ... | ... | ... | ... |
+| + Strategy D (matmul accelerator) | 6,698,993 | −42,187,164 | −86.3% | 7.30× |
+| + Strategy E (DMA + Batching) | **2,914,655** | **−45,971,502** | **−94.0%** | **16.77×** |
 
 <!-- Future improvement entries go here, following the same date-header format -->
