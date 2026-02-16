@@ -39,6 +39,7 @@ RTL_SRCS = \
 	$(RTL_DIR)/BranchPrediction.v \
 	$(RTL_DIR)/riscv_arbiter.v \
 	$(RTL_DIR)/Multiplier.sv \
+	$(RTL_DIR)/HazardUnit.sv \
 	$(RTL_DIR)/Opcode.vh \
 	/Users/peter/verilator/riscv-accelerator/MatmulAccelerator.sv
 
