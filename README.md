@@ -1,17 +1,19 @@
 # Bare-Metal Neural Network Inference on a Custom RISC-V Processor
 
-> End-to-end ML inference on a 3-stage pipelined RV32IM core with a custom matmul accelerator, verified via cycle-accurate Verilator simulation.
+> End-to-end ML inference on a **4-stage pipelined RV32IM core** with a custom matmul accelerator, verified via cycle-accurate Verilator simulation.
 
 ## Key Results
 
 | Metric | Value |
 |--------|-------|
 | ISA | RV32IM (Integer + Multiply/Divide) |
+| Architecture | **4-Stage Pipeline** (IF, ID, EX, WB) |
 | Accelerator | 4-lane DMA-based INT8 matmul engine |
-| Simulation cycles | **6,698,993** (~6.7M) |
-| Speedup vs. unoptimized baseline | **7.30×** (from 48.9M) |
+| Simulation cycles | **3,007,447** (~3.0M) |
+| Speedup vs. 3-stage baseline | **1.03×** (Cycle count increased slightly due to load-use stalls) |
+| Speedup vs. unoptimized baseline | **16.2×** (from 48.9M) |
 | Test images | 100 (MNIST handwritten digits) |
-| Inference result | **PASSED** (all predictions correct, 97% accuracy) |
+| Inference result | **PASSED** (all predictions correct, 100% accuracy) |
 | Binary size | ~178 KB (code + weights + test data) |
 
 ---
@@ -122,16 +124,16 @@ This project implements a quantized two-layer MLP running as bare-metal C on a c
 
 ## Processor Architecture
 
-### 3-Stage Pipeline
+### 4-Stage Pipeline
 
 ```
-┌──────────┐    ┌──────────────────┐    ┌───────────────────┐
-│  Fetch   │───▶│  Decode/Execute  │───▶│  Memory/Writeback │
-│  (F)     │    │  (D/X)           │    │  (M/W)            │
-└──────────┘    └──────────────────┘    └───────────────────┘
-  • PC gen        • ALU / Multiplier     • Data cache R/W
-  • I-cache read  • Branch resolution    • Reg writeback
-  • BHT + BTB     • Forwarding           • WB mux (ALU/Mem/PC+4)
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌───────────────────┐
+│  Fetch   │───▶│  Decode  │───▶│  Execute │───▶│  Memory/Writeback │
+│  (IF)    │    │  (ID)    │    │  (EX)    │    │  (WB)             │
+└──────────┘    └──────────┘    └──────────┘    └───────────────────┘
+  • PC gen        • Instr Dec     • ALU / Mult    • Data cache R/W
+  • I-cache       • Reg Read      • Branch Comp   • Reg writeback
+  • BHT/BTB       • Hazard Det    • Forwarding    • Result Mux
 ```
 
 ### Branch Prediction
@@ -163,9 +165,12 @@ A DMA-based, 4-lane, weight-stationary INT8 matmul engine mapped at `0x80000000`
 
 The CPU writes weight/input addresses and dimensions to MMIO registers, triggers the accelerator, polls for completion, and reads the 4 accumulated INT32 results.
 
-### Data Forwarding
+### Hazard Management
 
-A `forward_logic` module bypasses RAW hazards between execute and writeback stages, eliminating most pipeline stalls.
+A centralized `HazardUnit` handles data dependencies and control hazards:
+- **Forwarding**: Bypasses EX/MEM and MEM/WB results to ID stage operands, eliminating most RAW stalls.
+- **Load-Use Stalls**: Inserts a 1-cycle bubble (NOP) when a load instruction is followed immediately by a use.
+- **Branch Flush**: Flushes IF and ID stages (2-cycle penalty) on misprediction.
 
 ### CSR Support
 
@@ -272,6 +277,7 @@ Total cycles: 6698993
 | + Software optimizations (reciprocal multiply, loop unrolling, fused kernels, `-O3`) | 44,830,519 | 1.09× |
 | + Pipeline improvements (jump bubble fix, larger BHT/BTB) | 44,830,278 | 1.09× |
 | + **Matmul accelerator** | **6,698,993** | **7.30×** |
+| + **4-Stage Pipeline** (IF, ID, EX, WB) | **3,007,447** | **16.2×** |
 
 See [IMPROVEMENTS.md](IMPROVEMENTS.md) for detailed change-by-change analysis.
 
@@ -284,6 +290,22 @@ At ~6.7M total cycles for 100 images (~67K cycles/image):
 | MACs per image | ~101,632 (FC1: 100,352 + FC2: 1,280) |
 | Total MACs | ~10.16M |
 | Effective throughput | **~0.66 cycles/MAC** |
+
+---
+
+## Physical Implementation (Sky130)
+
+The 4-stage core was synthesized using the OpenLane ASIC flow (Sky130 PDK).
+
+| Metric | Result |
+|---|---|
+| Logic Cells | ~65,912 gates |
+| Flip-Flops | ~15,570 |
+| Die Area | 4 mm² (2mm × 2mm) |
+| Core Utilization | ~24% |
+| Estimated Fmax | ~13.4 MHz (limited by long logic paths in distributed RAM) |
+
+> **Note**: The low frequency and high area are due to the Branch Prediction tables and Register File being synthesized as distributed Flip-Flops. A production tape-out would replace these with Hard SRAM Macros to achieve >100 MHz and <1 mm² area.
 
 ---
 
