@@ -5,12 +5,14 @@ SECTIONS
         * (.start);
         * (.text);
     }
+    . = ALIGN(16);
     .data : {
         * (.data);
         * (.rodata);
         * (.rodata.*);
         * (.sdata);
     }
+    . = ALIGN(16);
     .bss : {
         * (.bss);
         * (.sbss);

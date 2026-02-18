@@ -1,338 +1,305 @@
 `include "const.vh"
 
 // =============================================================================
-// MatmulAccelerator — 4-lane DMA-based INT8 dot-product accelerator
+// MatmulAccelerator — 4x4 Block Outer Product Engine (Phase 2)
 //
 // MMIO register map (active when dcache_addr[31] == 1):
-//   0x80000000  CTRL/STATUS  W: [0]=start [1]=clear   R: [0]=busy [1]=done
-//   0x80000004  W_ADDR       W: base byte address of weight matrix
-//   0x80000008  X_ADDR       W: base byte address of input vector
-//   0x8000000C  M_DIM        W: number of output rows to process (≤4)
-//   0x80000010  N_DIM        W: dot-product length (must be multiple of 4)
-//   0x80000014  RESULT0      R: lane 0 accumulated result (INT32)
-//   0x80000018  RESULT1      R: lane 1 accumulated result
-//   0x8000001C  RESULT2      R: lane 2 accumulated result
-//   0x80000020  RESULT3      R: lane 3 accumulated result
+//   0x80000000  CTRL/STATUS
+//       W: [0]=start [4]=err_clr
+//       R: [0]=busy [1]=done [2]=full [3]=empty [4]=error
+//   0x80000004  W_ADDR   (base of packed B vectors)
+//   0x80000008  X_ADDR   (base of packed A vectors)
+//   0x8000000C  M_DIM    (valid rows 1..4)
+//   0x80000010  N_DIM    (valid cols 1..4)
+//   0x80000014  K_DIM    (number of elements, not bytes)
+//   0x80000018 - 0x80000054 RESULTS (16 words) row-major c[0][0]..c[3][3]
 //
-// Operation:
-//   1. CPU writes W_ADDR, X_ADDR, M_DIM, N_DIM
-//   2. CPU writes CTRL=1 (start)
-//   3. Accelerator takes over dcache port, reads weights+inputs via DMA
-//   4. CPU polls STATUS until done bit is set
-//   5. CPU reads RESULT0–RESULT3
+// Notes:
+// - Results base moved to 0x18 to avoid overlap with K_DIM at 0x14.
+// - Assumes FIFO.sv is the REGISTERED-on-pop version (dout valid after pop).
+// - Assumes dma_rdata is valid one cycle after dma_re pulse.
 // =============================================================================
 
 module MatmulAccelerator (
-    input wire        clk,
-    input wire        reset,
+    input  wire         clk,
+    input  wire         reset,
 
-    // --- MMIO interface (directly from CPU dcache signals) ---
-    input wire [31:0] mmio_addr,    // CPU dcache_addr when addr[31]==1
-    input wire [31:0] mmio_wdata,   // CPU dcache_din
-    input wire [3:0]  mmio_we,      // CPU dcache_we (byte enables)
-    input wire        mmio_re,      // CPU dcache_re
-    output reg [31:0] mmio_rdata,   // read data back to CPU
+    // --- MMIO interface ---
+    input  wire [31:0]  mmio_addr,
+    input  wire [31:0]  mmio_wdata,
+    input  wire [3:0]   mmio_we,
+    input  wire         mmio_re,
+    output reg  [31:0]  mmio_rdata,
 
-    // --- DMA interface (directly drives dcache port when active) ---
-    output reg [31:0] dma_addr,     // address to read from data memory
-    output reg        dma_re,       // read enable for data memory
-    input wire [127:0] dma_rdata,   // data from data memory (128-bit wide)
+    // --- DMA interface ---
+    output reg  [31:0]  dma_addr,
+    output reg          dma_re,
+    input  wire [127:0] dma_rdata,
 
     // --- Control ---
-    output wire       accel_busy    // 1 when accelerator owns dcache port
+    output wire         accel_busy
 );
 
-    // ---- Configuration registers ----
-    reg [31:0] cfg_w_addr;   // base byte address of weights
-    reg [31:0] cfg_x_addr;   // base byte address of input
-    reg [31:0] cfg_m_dim;    // rows to compute (1–4)
-    reg [31:0] cfg_n_dim;    // dot-product length
+    // ---- Shadow config ----
+    reg [31:0] shadow_w_addr, shadow_x_addr;
+    reg [31:0] shadow_m_dim, shadow_n_dim, shadow_k_dim;
 
-    // ---- State machine ----
-    localparam S_IDLE        = 4'd0;
-    localparam S_LOAD_W      = 4'd1;  // DMA read weights into lane SRAMs
-    localparam S_LOAD_W_WAIT = 4'd2;  // wait for read response
-    localparam S_COMPUTE     = 4'd3;  // DMA read input + MAC
-    localparam S_COMP_WAIT   = 4'd4;  // wait for read response
-    localparam S_COMP_1      = 4'd5;
-    localparam S_COMP_2      = 4'd6;
-    localparam S_COMP_3      = 4'd7;
-    localparam S_DONE        = 4'd8;
+    // ---- Active command ----
+    reg [31:0] active_ctrl;
+    reg [31:0] active_w_addr, active_x_addr;
+    reg [31:0] active_m_dim, active_n_dim, active_k_dim;
 
-    reg [3:0]  state;
-    reg        done_flag;
+    // ---- FIFO ----
+    wire [255:0] fifo_din, fifo_dout;
+    wire         fifo_full, fifo_empty;
+    wire         fifo_push;
+    reg          fifo_pop;
+    reg          error_sticky;
 
-    // ---- DMA counters ----
-    reg [31:0] w_word_cnt;    // which word we're loading for weights
-    reg [31:0] n_words;       // cfg_n_dim / 4
-    reg [31:0] x_word_cnt;    // which word during compute phase
+    // Packet: [0]=CTRL [1]=W [2]=X [3]=RSVD [4]=M [5]=N [6]=K [7]=RSVD
+    assign fifo_din = {
+        32'd0,
+        shadow_k_dim,
+        shadow_n_dim,
+        shadow_m_dim,
+        32'd0,
+        shadow_x_addr,
+        shadow_w_addr,
+        mmio_wdata
+    };
 
-    // ---- 4 MAC lanes ----
-    // Each lane has: weight SRAM (up to 256 words = 1024 bytes), accumulator
-    localparam W_SRAM_DEPTH = 256; // supports N up to 1024
-
-    reg [31:0] w_sram_0 [0:W_SRAM_DEPTH-1];
-    reg [31:0] w_sram_1 [0:W_SRAM_DEPTH-1];
-    reg [31:0] w_sram_2 [0:W_SRAM_DEPTH-1];
-    reg [31:0] w_sram_3 [0:W_SRAM_DEPTH-1];
-
-    reg signed [31:0] acc_0, acc_1, acc_2, acc_3;
-
-    // ---- Busy signal ----
-    assign accel_busy = (state != S_IDLE) && (state != S_DONE);
-
-    // ---- MMIO write handling ----
-    wire mmio_wr = (|mmio_we);
+    // ---- MMIO decode ----
+    wire       mmio_wr    = (|mmio_we);
     wire [7:0] reg_offset = mmio_addr[7:0];
+    assign fifo_push = mmio_wr && (reg_offset == 8'h00) && mmio_wdata[0];
 
-    // Registered read offset for 1-cycle read latency (breaks comb loop)
-    reg [7:0] reg_offset_d;
+    FIFO #(.WIDTH(256), .DEPTH(4)) cmd_fifo (
+        .clk   (clk),
+        .reset (reset),
+        .push  (fifo_push && !fifo_full),
+        .pop   (fifo_pop),
+        .din   (fifo_din),
+        .dout  (fifo_dout),
+        .full  (fifo_full),
+        .empty (fifo_empty),
+        .count ()
+    );
 
-    // ---- Config register writes (accepted in ALL states) ----
+    // ---- Config writes ----
     always @(posedge clk) begin
         if (reset) begin
-            cfg_w_addr <= 0;
-            cfg_x_addr <= 0;
-            cfg_m_dim  <= 0;
-            cfg_n_dim  <= 0;
+            shadow_w_addr <= 0; shadow_x_addr <= 0;
+            shadow_m_dim  <= 0; shadow_n_dim  <= 0; shadow_k_dim <= 0;
+            error_sticky  <= 0;
         end else if (mmio_wr) begin
             case (reg_offset)
-                8'h04: cfg_w_addr <= mmio_wdata;
-                8'h08: cfg_x_addr <= mmio_wdata;
-                8'h0C: cfg_m_dim  <= mmio_wdata;
-                8'h10: cfg_n_dim  <= mmio_wdata;
-                default: ;
+                8'h04: shadow_w_addr <= mmio_wdata;
+                8'h08: shadow_x_addr <= mmio_wdata;
+                8'h0C: shadow_m_dim  <= mmio_wdata;
+                8'h10: shadow_n_dim  <= mmio_wdata;
+                8'h14: shadow_k_dim  <= mmio_wdata;
+                8'h00: begin
+                    if (mmio_wdata[4]) error_sticky <= 1'b0;       // err_clr
+                    if (mmio_wdata[0] && fifo_full) error_sticky <= 1'b1; // start when full
+                end
             endcase
         end
     end
 
-    // ---- State machine ----
-    reg [95:0] x_buffer; // Buffer for remaining 3 words of 128-bit input
+    // ---- Data regs ----
+    reg [127:0] reg_A, reg_B;
+    reg signed [31:0] c [0:3][0:3];
+
+    reg [31:0] curr_addr_a, curr_addr_b;
+    reg [31:0] k_cnt, k_limit;
+
+    // ---- States ----
+    localparam S_IDLE        = 4'd0;
+    localparam S_POP         = 4'd1;
+    localparam S_LATCH       = 4'd2;
+    localparam S_LOAD_A      = 4'd3;
+    localparam S_LOAD_A_WAIT = 4'd4;
+    localparam S_LOAD_B      = 4'd5;
+    localparam S_LOAD_B_WAIT = 4'd6;
+    localparam S_COMPUTE     = 4'd7;
+    localparam S_DONE        = 4'd8;
+
+    reg [3:0] state;
+
+    // Busy: running OR queued work exists
+    assign accel_busy = (state != S_IDLE) || !fifo_empty;
+
+    // Done bit: true when totally idle and queue empty
+    wire done_bit = (state == S_IDLE) && fifo_empty;
+
+    // ---- Helpers: packed int8 access ----
+    function automatic signed [7:0] get_a(input int step, input int idx);
+        int lo;
+        begin lo = step*32 + idx*8; get_a = $signed(reg_A[lo +: 8]); end
+    endfunction
+    function automatic signed [7:0] get_b(input int step, input int idx);
+        int lo;
+        begin lo = step*32 + idx*8; get_b = $signed(reg_B[lo +: 8]); end
+    endfunction
+
+    // ceil(K/4)
+    function automatic [31:0] ceil_div4(input [31:0] K);
+        begin ceil_div4 = (K + 32'd3) >> 2; end
+    endfunction
+
+    // remaining elements in this block = K - 4*k_cnt
+    function automatic int rem_k(input int K, input int blk);
+        begin rem_k = K - (blk * 4); end
+    endfunction
+
+    integer i, j;
 
     always @(posedge clk) begin
         if (reset) begin
-            state      <= S_IDLE;
-            done_flag  <= 0;
-            dma_re     <= 0;
-            dma_addr   <= 0;
-            acc_0      <= 0;
-            acc_1      <= 0;
-            acc_2      <= 0;
-            acc_3      <= 0;
-            w_word_cnt <= 0;
-            x_word_cnt <= 0;
-            n_words    <= 0;
-            x_buffer   <= 0;
+            state <= S_IDLE;
+            fifo_pop <= 0;
+            dma_re <= 0;
+            k_cnt <= 0; k_limit <= 0;
+            curr_addr_a <= 0; curr_addr_b <= 0;
+            active_ctrl <= 0;
+            active_w_addr <= 0; active_x_addr <= 0;
+            active_m_dim <= 0; active_n_dim <= 0; active_k_dim <= 0;
+            reg_A <= 0; reg_B <= 0;
+            for (i=0;i<4;i=i+1) for (j=0;j<4;j=j+1) c[i][j] <= '0;
         end else begin
+            fifo_pop <= 0;
+            dma_re   <= 0;
+
             case (state)
                 S_IDLE: begin
-                    dma_re <= 0;
-                    if (mmio_wr && reg_offset == 8'h00) begin
-                        if (mmio_wdata[1]) begin
-                            // Clear accumulators
-                            acc_0 <= 0;
-                            acc_1 <= 0;
-                            acc_2 <= 0;
-                            acc_3 <= 0;
-                        end
-                        if (mmio_wdata[0]) begin
-                            // Start
-                            done_flag  <= 0;
-                            n_words    <= cfg_n_dim >> 2;
-                            w_word_cnt <= 0;
-                            
-                            // Check for Skip Load (Bit 2)
-                            if (mmio_wdata[2]) begin
-                                state      <= S_COMPUTE;
-                                x_word_cnt <= 0;
-                                dma_addr   <= cfg_x_addr;
-                                dma_re     <= 1;
-                            end else begin
-                                state      <= S_LOAD_W;
-                                // Reset accumulators on new load? (Optional, but usually yes for new op)
-                                acc_0      <= 0;
-                                acc_1      <= 0;
-                                acc_2      <= 0;
-                                acc_3      <= 0;
-                                // Start first weight read
-                                dma_addr   <= cfg_w_addr;
-                                dma_re     <= 1;
+                    if (!fifo_empty) begin
+                        fifo_pop <= 1'b1;
+                        state    <= S_POP;
+                    end
+                end
+
+                S_POP: begin
+                    // fifo_dout now holds popped entry (registered-on-pop FIFO)
+                    state <= S_LATCH;
+                end
+
+                S_LATCH: begin
+                    active_ctrl   <= fifo_dout[31:0];
+                    active_w_addr <= fifo_dout[63:32];
+                    active_x_addr <= fifo_dout[95:64];
+                    active_m_dim  <= fifo_dout[159:128];
+                    active_n_dim  <= fifo_dout[191:160];
+                    active_k_dim  <= fifo_dout[223:192];
+
+                    // clear accumulators once per command
+                    for (i=0;i<4;i=i+1) for (j=0;j<4;j=j+1) c[i][j] <= '0;
+
+                    // setup loop
+                    k_cnt   <= 0;
+                    k_limit <= ceil_div4(fifo_dout[223:192]);
+
+                    curr_addr_a <= fifo_dout[95:64];
+                    curr_addr_b <= fifo_dout[63:32];
+
+                    // kick first A load
+                    dma_addr <= fifo_dout[95:64];
+                    dma_re   <= 1'b1;
+                    state    <= S_LOAD_A;
+                end
+
+                S_LOAD_A: begin
+                    state <= S_LOAD_A_WAIT;
+                end
+
+                S_LOAD_A_WAIT: begin
+                    reg_A <= dma_rdata;
+                    dma_addr <= curr_addr_b;
+                    dma_re   <= 1'b1;
+                    state    <= S_LOAD_B;
+                end
+
+                S_LOAD_B: begin
+                    state <= S_LOAD_B_WAIT;
+                end
+
+                S_LOAD_B_WAIT: begin
+                    reg_B <= dma_rdata;
+                    state <= S_COMPUTE;
+                end
+
+                S_COMPUTE: begin
+                    int rem;
+                    rem = rem_k(active_k_dim, k_cnt);
+
+                    for (i=0;i<4;i=i+1) begin
+                        for (j=0;j<4;j=j+1) begin
+                            if ((i < active_m_dim) && (j < active_n_dim)) begin
+                                c[i][j] <= c[i][j]
+                                    + ((rem > 0) ? (get_a(0,i) * get_b(0,j)) : 0)
+                                    + ((rem > 1) ? (get_a(1,i) * get_b(1,j)) : 0)
+                                    + ((rem > 2) ? (get_a(2,i) * get_b(2,j)) : 0)
+                                    + ((rem > 3) ? (get_a(3,i) * get_b(3,j)) : 0);
                             end
                         end
                     end
-                end
 
-                // ---- Weight Loading Phase ----
-                // Read 128 bits (4 words) at a time, distributing to Lanes 0-3
-                S_LOAD_W: begin
-                    // We issued a read last cycle, now wait for response
-                    dma_re <= 0;
-                    state  <= S_LOAD_W_WAIT;
-                end
-
-                S_LOAD_W_WAIT: begin
-                    // Response arrives this cycle (fixed latency)
-                    // Write to all 4 lanes simultaneously
-                    w_sram_0[w_word_cnt] <= dma_rdata[31:0];
-                    w_sram_1[w_word_cnt] <= dma_rdata[63:32];
-                    w_sram_2[w_word_cnt] <= dma_rdata[95:64];
-                    w_sram_3[w_word_cnt] <= dma_rdata[127:96];
-
-                    // Advance to next word
-                    if (w_word_cnt + 1 == n_words) begin
-                        // All weights loaded
-                        state      <= S_COMPUTE;
-                        x_word_cnt <= 0;
-                        dma_addr   <= cfg_x_addr;
-                        dma_re     <= 1;
+                    if (k_cnt + 1 >= k_limit) begin
+                        state <= S_DONE;
                     end else begin
-                        // Next set of 4 words
-                        w_word_cnt <= w_word_cnt + 1;
-                        dma_addr   <= dma_addr + 16; // Increment by 16 bytes
-                        dma_re     <= 1;
-                        state      <= S_LOAD_W;
+                        k_cnt       <= k_cnt + 1;
+                        curr_addr_a <= curr_addr_a + 16;
+                        curr_addr_b <= curr_addr_b + 16;
+
+                        dma_addr <= curr_addr_a + 16;
+                        dma_re   <= 1'b1;
+                        state    <= S_LOAD_A;
                     end
                 end
-
-                // ---- Compute Phase ----
-                // Read 128-bit input (4 words), consume over 4 cycles
-                S_COMPUTE: begin
-                    dma_re <= 0;
-                    state  <= S_COMP_WAIT;
-                end
-
-                S_COMP_WAIT: begin // Process Word 0
-                    // dma_rdata has [Word3, Word2, Word1, Word0]
-                    // Buffer Word1-3
-                    x_buffer <= dma_rdata[127:32];
-                    
-                    // MAC with Word 0
-                    acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], dma_rdata[31:0]);
-                    if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], dma_rdata[31:0]);
-                    if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], dma_rdata[31:0]);
-                    if (cfg_m_dim > 3) acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], dma_rdata[31:0]);
-
-                    x_word_cnt <= x_word_cnt + 1;
-                    state <= S_COMP_1;
-                end
-
-                S_COMP_1: begin // Process Word 1
-                    acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], x_buffer[31:0]);
-                    if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], x_buffer[31:0]);
-                    if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], x_buffer[31:0]);
-                    if (cfg_m_dim > 3) acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], x_buffer[31:0]);
-
-                    x_buffer <= x_buffer >> 32;
-                    x_word_cnt <= x_word_cnt + 1;
-                    state <= S_COMP_2;
-                end
-
-                S_COMP_2: begin // Process Word 2
-                    acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], x_buffer[31:0]);
-                    if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], x_buffer[31:0]);
-                    if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], x_buffer[31:0]);
-                    if (cfg_m_dim > 3) acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], x_buffer[31:0]);
-
-                    x_buffer <= x_buffer >> 32;
-                    x_word_cnt <= x_word_cnt + 1;
-                    state <= S_COMP_3;
-                end
-                
-                S_COMP_3: begin // Process Word 3
-                    acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], x_buffer[31:0]);
-                    if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], x_buffer[31:0]);
-                    if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], x_buffer[31:0]);
-                    if (cfg_m_dim > 3) acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], x_buffer[31:0]);
-
-                    if (x_word_cnt + 1 == n_words) begin
-                        state     <= S_DONE;
-                        done_flag <= 1;
-                        dma_re    <= 0;
-                    end else begin
-                         x_word_cnt <= x_word_cnt + 1;
-                         dma_addr   <= dma_addr + 16;
-                         dma_re     <= 1;
-                         state      <= S_COMPUTE;
-                    end
-                 end
 
                 S_DONE: begin
-                    dma_re <= 0;
-                    // Stay in DONE until CPU reads status or starts new op
-                    if (mmio_wr && reg_offset == 8'h00) begin
-                        if (mmio_wdata[0]) begin
-                            // New start
-                            done_flag  <= 0;
-                            n_words    <= cfg_n_dim >> 2;
-                            w_word_cnt <= 0;
-                            x_word_cnt <= 0;
-                            acc_0      <= 0;
-                            acc_1      <= 0;
-                            acc_2      <= 0;
-                            acc_3      <= 0;
-                            if (mmio_wdata[2]) begin
-                                // Skip weight load and immediately compute
-                                state    <= S_COMPUTE;
-                                dma_addr <= cfg_x_addr;
-                                dma_re   <= 1;
-                            end else begin
-                                state    <= S_LOAD_W;
-                                dma_addr <= cfg_w_addr;
-                                dma_re   <= 1;
-                            end
-                        end else begin
-                            state     <= S_IDLE;
-                            done_flag <= 0;
-                        end
-                    end
-                end
-                default: begin
                     state <= S_IDLE;
-                    dma_re <= 0;
                 end
+
+                default: state <= S_IDLE;
             endcase
         end
     end
 
-    // ---- Register read offset (1-cycle latency like memory) ----
+    // ---- MMIO Read ----
+    reg [7:0] reg_offset_d;
     always @(posedge clk) begin
-        if (reset)
-            reg_offset_d <= 0;
-        else if (mmio_re)
-            reg_offset_d <= reg_offset;
+        if (reset) reg_offset_d <= 8'd0;
+        else if (mmio_re) reg_offset_d <= reg_offset;
     end
 
-    // ---- MMIO read handling (registered, uses delayed offset) ----
+    // STATUS bits: [0]=busy [1]=done [2]=full [3]=empty [4]=error
     always @(*) begin
         case (reg_offset_d)
-            8'h00:   mmio_rdata = {30'd0, done_flag, accel_busy};
-            8'h14:   mmio_rdata = acc_0;
-            8'h18:   mmio_rdata = acc_1;
-            8'h1C:   mmio_rdata = acc_2;
-            8'h20:   mmio_rdata = acc_3;
+            8'h00: mmio_rdata = {27'd0, error_sticky, fifo_empty, fifo_full, done_bit, accel_busy};
+
+            // Results start at 0x18 now
+            8'h18: mmio_rdata = c[0][0];
+            8'h1C: mmio_rdata = c[0][1];
+            8'h20: mmio_rdata = c[0][2];
+            8'h24: mmio_rdata = c[0][3];
+
+            8'h28: mmio_rdata = c[1][0];
+            8'h2C: mmio_rdata = c[1][1];
+            8'h30: mmio_rdata = c[1][2];
+            8'h34: mmio_rdata = c[1][3];
+
+            8'h38: mmio_rdata = c[2][0];
+            8'h3C: mmio_rdata = c[2][1];
+            8'h40: mmio_rdata = c[2][2];
+            8'h44: mmio_rdata = c[2][3];
+
+            8'h48: mmio_rdata = c[3][0];
+            8'h4C: mmio_rdata = c[3][1];
+            8'h50: mmio_rdata = c[3][2];
+            8'h54: mmio_rdata = c[3][3];
+
             default: mmio_rdata = 32'd0;
         endcase
     end
-
-    // ---- Packed INT8 dot product function ----
-    // Takes two 32-bit words, each containing 4 packed INT8 values
-    // Returns sum of 4 pairwise INT8 products
-    function signed [31:0] packed_dot;
-        input [31:0] a;
-        input [31:0] b;
-        reg signed [7:0] a0, a1, a2, a3;
-        reg signed [7:0] b0, b1, b2, b3;
-        begin
-            a0 = $signed(a[7:0]);
-            a1 = $signed(a[15:8]);
-            a2 = $signed(a[23:16]);
-            a3 = $signed(a[31:24]);
-            b0 = $signed(b[7:0]);
-            b1 = $signed(b[15:8]);
-            b2 = $signed(b[23:16]);
-            b3 = $signed(b[31:24]);
-            packed_dot = (a0 * b0) + (a1 * b1) + (a2 * b2) + (a3 * b3);
-        end
-    endfunction
 
 endmodule

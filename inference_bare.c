@@ -1,5 +1,4 @@
-// inference_bare.c — Bare-metal fixed-point MLP inference
-// Updated for Batched Inference and Interleaved DMA Accelerator
+// inference_bare.c — Bare-metal fixed-point MLP inference (Phase 2)
 
 #include "test_images.h"
 #include "weights.h"
@@ -8,9 +7,9 @@
 #include <stdint.h>
 
 #define csr_tohost(val)                                                        \
-  {                                                                            \
+  do {                                                                         \
     asm volatile("csrw 0x51e, %[v]" ::[v] "r"(val));                           \
-  }
+  } while (0)
 
 void *memset(void *s, int c, size_t n) {
   unsigned char *p = (unsigned char *)s;
@@ -27,8 +26,13 @@ void *memcpy(void *dest, const void *src, size_t n) {
   return dest;
 }
 
+// Layer Sizes
+#define INPUT_SIZE 784
+#define HIDDEN_SIZE 128
+#define OUTPUT_SIZE 10
+
 // =============================================================
-// Matmul Accelerator MMIO
+// Matmul Accelerator MMIO (UPDATED MAP: results start at 0x18)
 // =============================================================
 #define ACCEL_BASE 0x80000000
 #define ACCEL_CTRL (*(volatile uint32_t *)(ACCEL_BASE + 0x00))
@@ -37,116 +41,138 @@ void *memcpy(void *dest, const void *src, size_t n) {
 #define ACCEL_X_ADDR (*(volatile uint32_t *)(ACCEL_BASE + 0x08))
 #define ACCEL_M_DIM (*(volatile uint32_t *)(ACCEL_BASE + 0x0C))
 #define ACCEL_N_DIM (*(volatile uint32_t *)(ACCEL_BASE + 0x10))
-#define ACCEL_RESULT0 (*(volatile int32_t *)(ACCEL_BASE + 0x14))
-#define ACCEL_RESULT1 (*(volatile int32_t *)(ACCEL_BASE + 0x18))
-#define ACCEL_RESULT2 (*(volatile int32_t *)(ACCEL_BASE + 0x1C))
-#define ACCEL_RESULT3 (*(volatile int32_t *)(ACCEL_BASE + 0x20))
+#define ACCEL_K_DIM (*(volatile uint32_t *)(ACCEL_BASE + 0x14))
 
-// 4-lane accelerator requires interleaved weights:
-// [Row0_W0, Row1_W0, Row2_W0, Row3_W0, Row0_W1...]
-// We copy weights to RAM and interleave them.
-// FC1: 128x784 (exact multiple of 4 rows)
-// FC2: 10x128 (pad to 12 rows)
-int8_t __attribute__((aligned(16))) fc1_weights_hw[128 * 784];
-int8_t
-    __attribute__((aligned(16))) fc2_weights_hw[12 * 128]; // Padded to 12 rows
+// RESULTS moved to start at 0x18 (so K_DIM at 0x14 doesn't overlap)
+#define ACCEL_RESULT_BASE (ACCEL_BASE + 0x18)
 
-static void interleave_weights(const int8_t *src, int8_t *dst, int rows,
-                               int cols) {
-  // Process in blocks of 4 rows (Lanes)
-  for (int r = 0; r < rows; r += 4) {
-    int rows_in_block = (rows - r >= 4) ? 4 : (rows - r);
-    // Process columns in blocks of 4 (one 32-bit word per lane)
-    for (int c = 0; c < cols; c += 4) {
-      // For each lane (row), output 4 sequential column values
-      for (int i = 0; i < 4; i++) {   // Lane 0..3
-        for (int j = 0; j < 4; j++) { // Column c..c+3
-          if (i < rows_in_block && (c + j) < cols) {
-            *dst++ = src[(r + i) * cols + (c + j)];
-          } else {
-            *dst++ = 0; // Padding
-          }
-        }
-      }
+static inline int32_t read_result(int row, int col) {
+  volatile int32_t *addr =
+      (volatile int32_t *)(ACCEL_RESULT_BASE + (row * 4 + col) * 4);
+  return *addr;
+}
+
+// =============================================================
+// Data Packing
+// =============================================================
+
+// Pack Inputs: 4 input vectors -> words over k
+// For each k: word = [in3, in2, in1, in0] with in0 in bits[7:0]
+void pack_input_batch(const int8_t **inputs, int8_t *dst, int K) {
+  int32_t *dst32 = (int32_t *)dst;
+  for (int k = 0; k < K; k++) {
+    uint8_t b0 = (uint8_t)inputs[0][k];
+    uint8_t b1 = (uint8_t)inputs[1][k];
+    uint8_t b2 = (uint8_t)inputs[2][k];
+    uint8_t b3 = (uint8_t)inputs[3][k];
+    uint32_t packed = ((uint32_t)b3 << 24) | ((uint32_t)b2 << 16) |
+                      ((uint32_t)b1 << 8) | ((uint32_t)b0);
+    dst32[k] = (int32_t)packed;
+  }
+}
+
+// Pack Weights for a 4-neuron block starting at n_start.
+// Assumes src_weights is row-major: src_weights[n*K + k].
+// For each k: word = [w3, w2, w1, w0] where wj = weight[(n_start+j), k]
+void pack_weight_block(const int8_t *src_weights, int8_t *dst, int n_start,
+                       int K, int N_total) {
+  int32_t *dst32 = (int32_t *)dst;
+
+  for (int k = 0; k < K; k++) {
+    uint8_t w0 = 0, w1 = 0, w2 = 0, w3 = 0;
+
+    int n0 = n_start + 0;
+    int n1 = n_start + 1;
+    int n2 = n_start + 2;
+    int n3 = n_start + 3;
+
+    if (n0 < N_total)
+      w0 = (uint8_t)src_weights[n0 * K + k];
+    if (n1 < N_total)
+      w1 = (uint8_t)src_weights[n1 * K + k];
+    if (n2 < N_total)
+      w2 = (uint8_t)src_weights[n2 * K + k];
+    if (n3 < N_total)
+      w3 = (uint8_t)src_weights[n3 * K + k];
+
+    uint32_t packed = ((uint32_t)w3 << 24) | ((uint32_t)w2 << 16) |
+                      ((uint32_t)w1 << 8) | ((uint32_t)w0);
+    dst32[k] = (int32_t)packed;
+  }
+}
+
+// =============================================================
+// Buffers (Aligned)
+// =============================================================
+int8_t __attribute__((aligned(16))) input_batch_hw[784 * 4];
+
+// Packed weights are stored as:
+// blocks = ceil(M/4)
+// each block consumes (K * 4) bytes (K int32 words)
+int8_t __attribute__((aligned(16))) fc1_W_hw[128 * 784]; // 100,352 bytes
+int8_t __attribute__((aligned(16))) fc2_W_hw[12 * 128];  // 6,144 bytes
+
+// =============================================================
+// Driver
+// =============================================================
+static inline void run_accelerator_4x4(const int8_t *W_addr,
+                                       const int8_t *X_addr, int M_dim,
+                                       int N_dim, int K_dim) {
+  ACCEL_W_ADDR = (uint32_t)W_addr;
+  ACCEL_X_ADDR = (uint32_t)X_addr;
+  ACCEL_M_DIM = (uint32_t)M_dim;
+  ACCEL_N_DIM = (uint32_t)N_dim;
+  ACCEL_K_DIM = (uint32_t)K_dim;
+  ACCEL_CTRL = 1; // START
+}
+
+void layer_dense_4x4(const int8_t *W_packed_base, const int8_t *X_packed,
+                     int32_t **outputs, int M, int K) {
+
+  const int blocks = (M + 3) / 4;
+  const int bytes_per_block = K * 4; // K int32 words
+
+  for (int blk = 0; blk < blocks; blk++) {
+    const int m = blk * 4;
+
+    // wait if FIFO full (bit2=full)
+    while (ACCEL_STATUS & (1u << 2)) {
+      ;
+    }
+
+    const int8_t *w_ptr = W_packed_base + (blk * bytes_per_block);
+
+    run_accelerator_4x4(w_ptr, X_packed, 4, 4, K);
+
+    // wait done (bit1=done)
+    while (!(ACCEL_STATUS & (1u << 1))) {
+      ;
+    }
+
+    // read results: c[row=batch][col=neuron within block]
+    for (int b = 0; b < 4; b++) {
+      int out_base = m;
+      outputs[b][out_base + 0] = read_result(b, 0);
+      if (out_base + 1 < M)
+        outputs[b][out_base + 1] = read_result(b, 1);
+      if (out_base + 2 < M)
+        outputs[b][out_base + 2] = read_result(b, 2);
+      if (out_base + 3 < M)
+        outputs[b][out_base + 3] = read_result(b, 3);
     }
   }
 }
 
-// Driver: Compute matmul for a BATCH of inputs against SAME weight tile
-// skip_load=false: Load weights, then compute 1st input
-// skip_load=true: Reuse weights, compute input
-static void
-matmul_tile_batch(const int8_t *W_tile_addr,
-                  const int8_t **inputs, // Array of pointers to inputs
-                  int32_t **outputs,     // Array of pointers to outputs
-                  int start_row,         // Current output row offset
-                  int num_rows,          // Rows in this tile (1-4)
-                  int N, int batch_size) {
-  // 1. Load Weights + Compute Batch[0]
-  ACCEL_W_ADDR = (uint32_t)W_tile_addr; // Already interleaved
-  ACCEL_X_ADDR = (uint32_t)inputs[0];
-  ACCEL_M_DIM = num_rows;
-  ACCEL_N_DIM = N;
-  ACCEL_CTRL = 1; // Start (Load + Compute)
-
-  while (!(ACCEL_STATUS & 0x2))
-    ; // Wait Done
-
-  outputs[0][start_row] = ACCEL_RESULT0;
-  if (num_rows > 1)
-    outputs[0][start_row + 1] = ACCEL_RESULT1;
-  if (num_rows > 2)
-    outputs[0][start_row + 2] = ACCEL_RESULT2;
-  if (num_rows > 3)
-    outputs[0][start_row + 3] = ACCEL_RESULT3;
-
-  // 2. Compute remaining batches (Skip Load)
-  for (int b = 1; b < batch_size; b++) {
-    ACCEL_X_ADDR = (uint32_t)inputs[b];
-    // Keep W_ADDR, M, N same.
-    // Set Bit 0 (Start) AND Bit 2 (Skip Load) -> 0x5
-    ACCEL_CTRL = 5;
-
-    while (!(ACCEL_STATUS & 0x2))
-      ;
-
-    outputs[b][start_row] = ACCEL_RESULT0;
-    if (num_rows > 1)
-      outputs[b][start_row + 1] = ACCEL_RESULT1;
-    if (num_rows > 2)
-      outputs[b][start_row + 2] = ACCEL_RESULT2;
-    if (num_rows > 3)
-      outputs[b][start_row + 3] = ACCEL_RESULT3;
-  }
-}
-
-// Full Layer Batch Matmul
-static void layer_matmul_batch(const int8_t *W_interleaved,
-                               const int8_t **inputs, int32_t **outputs, int M,
-                               int N, int batch_size) {
-  // Iterate over output rows in blocks of 4
-  // Since W is interleaved, W pointer advances by 4*N bytes per tile
-  const int8_t *w_ptr = W_interleaved;
-
-  for (int i = 0; i < M; i += 4) {
-    int rows_this_tile = (M - i >= 4) ? 4 : (M - i);
-    matmul_tile_batch(w_ptr, inputs, outputs, i, rows_this_tile, N, batch_size);
-
-    w_ptr += 4 * N; // Advance to next interleaved block
-  }
-}
-
-// Division helper for quantization scaling without relying on DIV instruction.
+// =============================================================
+// Math helpers (unchanged)
+// =============================================================
 static int32_t soft_div(int32_t numer, int32_t denom) {
-  if (denom == 0) {
+  if (denom == 0)
     return 0;
-  }
-
   const bool neg = ((numer < 0) ^ (denom < 0));
   uint64_t a = (numer < 0) ? (uint64_t)(-(int64_t)numer) : (uint64_t)numer;
   const uint64_t b =
       (denom < 0) ? (uint64_t)(-(int64_t)denom) : (uint64_t)denom;
-
   uint32_t q = 0;
   for (int i = 31; i >= 0; i--) {
     const uint64_t shifted = b << i;
@@ -155,7 +181,6 @@ static int32_t soft_div(int32_t numer, int32_t denom) {
       q |= (1u << i);
     }
   }
-
   return neg ? -(int32_t)q : (int32_t)q;
 }
 
@@ -174,11 +199,9 @@ static void fused_bias_relu_rescale(int32_t *raw, const int32_t *bias,
       out[i] = 0;
     return;
   }
-  // Replace hardware division with soft_div
   int32_t recip = soft_div((127 << 16), max_val);
-  for (int i = 0; i < size; i++) {
+  for (int i = 0; i < size; i++)
     out[i] = (int8_t)((raw[i] * recip) >> 16);
-  }
 }
 
 static void add_bias(int32_t *out, const int32_t *bias, int size) {
@@ -198,75 +221,80 @@ static int argmax(int32_t *x, int size) {
   return max_idx;
 }
 
+// =============================================================
 // Buffers for Batch=4
+// =============================================================
 #define BATCH_SIZE 4
 int32_t l1_raw[BATCH_SIZE][HIDDEN_SIZE];
 int8_t l1_q[BATCH_SIZE][HIDDEN_SIZE];
-int32_t l2_raw[BATCH_SIZE][OUTPUT_SIZE];
+int32_t l2_raw[BATCH_SIZE][16];
 
-// Aligned input buffer for batch
-int8_t __attribute__((aligned(16))) batch_inputs_aligned[BATCH_SIZE][784];
+int32_t *ptr_l1_raw[BATCH_SIZE];
+int32_t *ptr_l2_raw[BATCH_SIZE];
 
 int main(void) {
-  // 1. Prepare Weights
-  interleave_weights(fc1_weight, fc1_weights_hw, 128, 784);
-  interleave_weights(fc2_weight, fc2_weights_hw, 10, 128);
+  // FC1: 128x784 => blocks=32, bytes_per_block = 784*4
+  for (int i = 0; i < 128; i += 4) {
+    int blk = i / 4;
+    pack_weight_block(fc1_weight, fc1_W_hw + (blk * (784 * 4)), i, 784, 128);
+  }
+
+  // FC2: 10x128 padded to 12 => blocks=3, bytes_per_block = 128*4
+  for (int i = 0; i < 12; i += 4) {
+    int blk = i / 4;
+    pack_weight_block(fc2_weight, fc2_W_hw + (blk * (128 * 4)), i, 128, 10);
+  }
+
+  for (int b = 0; b < BATCH_SIZE; b++) {
+    ptr_l1_raw[b] = l1_raw[b];
+    ptr_l2_raw[b] = l2_raw[b];
+  }
 
   int correct = 0;
   for (int i = 0; i < NUM_TEST_IMAGES; i += BATCH_SIZE) {
     int batch = (NUM_TEST_IMAGES - i >= BATCH_SIZE) ? BATCH_SIZE
                                                     : (NUM_TEST_IMAGES - i);
 
-    // Pointers for batch
-    const int8_t *batch_inputs[BATCH_SIZE];
-    int32_t *batch_l1_raw[BATCH_SIZE];
-    const int8_t *batch_l1_q[BATCH_SIZE];
-    int32_t *batch_l2_raw[BATCH_SIZE];
-
-    for (int b = 0; b < batch; b++) {
-      // Copy to aligned buffer
-      memcpy(batch_inputs_aligned[b], test_images[i + b], 784);
-      batch_inputs[b] = batch_inputs_aligned[b];
-
-      batch_l1_raw[b] = l1_raw[b];
-      batch_l1_q[b] = l1_q[b];
-      batch_l2_raw[b] = l2_raw[b];
+    const int8_t *in_ptrs[4];
+    for (int b = 0; b < 4; b++) {
+      if (b < batch)
+        in_ptrs[b] = test_images[i + b];
+      else
+        in_ptrs[b] = test_images[i];
     }
 
-    // Layer 1: FC1
-    layer_matmul_batch(fc1_weights_hw, batch_inputs, batch_l1_raw, HIDDEN_SIZE,
-                       INPUT_SIZE, batch);
+    // Layer 1
+    pack_input_batch(in_ptrs, input_batch_hw, INPUT_SIZE);
+    layer_dense_4x4(fc1_W_hw, input_batch_hw, ptr_l1_raw, HIDDEN_SIZE,
+                    INPUT_SIZE);
 
-    // Activation
     for (int b = 0; b < batch; b++) {
       fused_bias_relu_rescale(l1_raw[b], fc1_bias, l1_q[b], HIDDEN_SIZE);
     }
 
-    // Layer 2: FC2
-    // Note: l1_q is array of int8_t, but layer_matmul expects array of
-    // pointers. We set up batch_l1_q above.
-    layer_matmul_batch(fc2_weights_hw, batch_l1_q, batch_l2_raw, OUTPUT_SIZE,
-                       HIDDEN_SIZE, batch);
+    // Layer 2
+    const int8_t *l1_ptrs[4];
+    for (int b = 0; b < 4; b++)
+      l1_ptrs[b] = l1_q[b];
+    pack_input_batch(l1_ptrs, input_batch_hw, HIDDEN_SIZE);
 
-    // Bias + Argmax
+    // M padded to 12 so blocks align; bias/argmax uses OUTPUT_SIZE=10
+    layer_dense_4x4(fc2_W_hw, input_batch_hw, ptr_l2_raw, 12, HIDDEN_SIZE);
+
     for (int b = 0; b < batch; b++) {
       add_bias(l2_raw[b], fc2_bias, OUTPUT_SIZE);
       int pred = argmax(l2_raw[b], OUTPUT_SIZE);
-      if (pred == expected_labels[i + b]) {
+      if (pred == expected_labels[i + b])
         correct++;
-      }
     }
   }
 
   int num_wrong = NUM_TEST_IMAGES - correct;
-  if (num_wrong == 0) {
+  if (num_wrong == 0)
     csr_tohost(1);
-  } else {
+  else
     csr_tohost(num_wrong + 1);
-  }
 
   for (;;)
     asm volatile("nop");
-
-  return 0;
 }
