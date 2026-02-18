@@ -42,6 +42,8 @@ void *memcpy(void *dest, const void *src, size_t n) {
 #define ACCEL_M_DIM (*(volatile uint32_t *)(ACCEL_BASE + 0x0C))
 #define ACCEL_N_DIM (*(volatile uint32_t *)(ACCEL_BASE + 0x10))
 #define ACCEL_K_DIM (*(volatile uint32_t *)(ACCEL_BASE + 0x14))
+#define ACCEL_X_STRIDE (*(volatile uint32_t *)(ACCEL_BASE + 0x58))
+#define ACCEL_K_ROW_LEN (*(volatile uint32_t *)(ACCEL_BASE + 0x5C))
 
 // RESULTS moved to start at 0x18 (so K_DIM at 0x14 doesn't overlap)
 #define ACCEL_RESULT_BASE (ACCEL_BASE + 0x18)
@@ -123,6 +125,22 @@ static inline void run_accelerator_4x4(const int8_t *W_addr,
   ACCEL_M_DIM = (uint32_t)M_dim;
   ACCEL_N_DIM = (uint32_t)N_dim;
   ACCEL_K_DIM = (uint32_t)K_dim;
+  ACCEL_X_STRIDE = 16; // Default linear
+  ACCEL_K_ROW_LEN = (K_dim + 3) / 4;
+  ACCEL_CTRL = 1; // START
+}
+
+static inline void run_accelerator_strided(const int8_t *W_addr,
+                                           const int8_t *X_addr, int M_dim,
+                                           int N_dim, int K_dim, int x_stride,
+                                           int k_row_len) {
+  ACCEL_W_ADDR = (uint32_t)W_addr;
+  ACCEL_X_ADDR = (uint32_t)X_addr;
+  ACCEL_M_DIM = (uint32_t)M_dim;
+  ACCEL_N_DIM = (uint32_t)N_dim;
+  ACCEL_K_DIM = (uint32_t)K_dim;
+  ACCEL_X_STRIDE = (uint32_t)x_stride;
+  ACCEL_K_ROW_LEN = (uint32_t)k_row_len;
   ACCEL_CTRL = 1; // START
 }
 

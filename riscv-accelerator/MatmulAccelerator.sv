@@ -13,6 +13,8 @@
 //   0x80000010  N_DIM    (valid cols 1..4)
 //   0x80000014  K_DIM    (number of elements, not bytes)
 //   0x80000018 - 0x80000054 RESULTS (16 words) row-major c[0][0]..c[3][3]
+//   0x80000058  X_STRIDE (byte jump after a row of blocks)
+//   0x8000005C  K_ROW_LEN(number of 128-bit blocks per row)
 //
 // Notes:
 // - Results base moved to 0x18 to avoid overlap with K_DIM at 0x14.
@@ -43,11 +45,13 @@ module MatmulAccelerator (
     // ---- Shadow config ----
     reg [31:0] shadow_w_addr, shadow_x_addr;
     reg [31:0] shadow_m_dim, shadow_n_dim, shadow_k_dim;
+    reg [31:0] shadow_x_stride, shadow_k_row_len;
 
     // ---- Active command ----
     reg [31:0] active_ctrl;
     reg [31:0] active_w_addr, active_x_addr;
     reg [31:0] active_m_dim, active_n_dim, active_k_dim;
+    reg [31:0] active_x_stride, active_k_row_len;
 
     // ---- FIFO ----
     wire [255:0] fifo_din, fifo_dout;
@@ -56,13 +60,13 @@ module MatmulAccelerator (
     reg          fifo_pop;
     reg          error_sticky;
 
-    // Packet: [0]=CTRL [1]=W [2]=X [3]=RSVD [4]=M [5]=N [6]=K [7]=RSVD
+    // Packet: [0]=CTRL [1]=W [2]=X [3]=X_STRIDE [4]=M [5]=N [6]=K [7]=K_ROW_LEN
     assign fifo_din = {
-        32'd0,
+        shadow_k_row_len,
         shadow_k_dim,
         shadow_n_dim,
         shadow_m_dim,
-        32'd0,
+        shadow_x_stride,
         shadow_x_addr,
         shadow_w_addr,
         mmio_wdata
@@ -98,6 +102,8 @@ module MatmulAccelerator (
                 8'h0C: shadow_m_dim  <= mmio_wdata;
                 8'h10: shadow_n_dim  <= mmio_wdata;
                 8'h14: shadow_k_dim  <= mmio_wdata;
+                8'h58: shadow_x_stride  <= mmio_wdata;
+                8'h5C: shadow_k_row_len <= mmio_wdata;
                 8'h00: begin
                     if (mmio_wdata[4]) error_sticky <= 1'b0;       // err_clr
                     if (mmio_wdata[0] && fifo_full) error_sticky <= 1'b1; // start when full
@@ -112,6 +118,7 @@ module MatmulAccelerator (
 
     reg [31:0] curr_addr_a, curr_addr_b;
     reg [31:0] k_cnt, k_limit;
+    reg [31:0] k_row_cnt;
 
     // ---- States ----
     localparam S_IDLE        = 4'd0;
@@ -164,8 +171,10 @@ module MatmulAccelerator (
             active_ctrl <= 0;
             active_w_addr <= 0; active_x_addr <= 0;
             active_m_dim <= 0; active_n_dim <= 0; active_k_dim <= 0;
+            active_x_stride <= 0; active_k_row_len <= 0;
             reg_A <= 0; reg_B <= 0;
             for (i=0;i<4;i=i+1) for (j=0;j<4;j=j+1) c[i][j] <= '0;
+            k_row_cnt <= 0;
         end else begin
             fifo_pop <= 0;
             dma_re   <= 0;
@@ -190,13 +199,16 @@ module MatmulAccelerator (
                     active_m_dim  <= fifo_dout[159:128];
                     active_n_dim  <= fifo_dout[191:160];
                     active_k_dim  <= fifo_dout[223:192];
+                    active_x_stride  <= fifo_dout[127:96];
+                    active_k_row_len <= fifo_dout[255:224];
 
                     // clear accumulators once per command
                     for (i=0;i<4;i=i+1) for (j=0;j<4;j=j+1) c[i][j] <= '0;
 
                     // setup loop
-                    k_cnt   <= 0;
-                    k_limit <= ceil_div4(fifo_dout[223:192]);
+                    k_cnt     <= 0;
+                    k_row_cnt <= 0;
+                    k_limit   <= ceil_div4(fifo_dout[223:192]);
 
                     curr_addr_a <= fifo_dout[95:64];
                     curr_addr_b <= fifo_dout[63:32];
@@ -246,13 +258,21 @@ module MatmulAccelerator (
                     if (k_cnt + 1 >= k_limit) begin
                         state <= S_DONE;
                     end else begin
-                        k_cnt       <= k_cnt + 1;
-                        curr_addr_a <= curr_addr_a + 16;
+                        k_cnt <= k_cnt + 1;
                         curr_addr_b <= curr_addr_b + 16;
 
-                        dma_addr <= curr_addr_a + 16;
-                        dma_re   <= 1'b1;
-                        state    <= S_LOAD_A;
+                        if (active_k_row_len > 0 && (k_row_cnt + 1 >= active_k_row_len)) begin
+                            k_row_cnt   <= 0;
+                            curr_addr_a <= curr_addr_a + active_x_stride;
+                            dma_addr    <= curr_addr_a + active_x_stride;
+                        end else begin
+                            k_row_cnt   <= k_row_cnt + 1;
+                            curr_addr_a <= curr_addr_a + 16;
+                            dma_addr    <= curr_addr_a + 16;
+                        end
+
+                        dma_re <= 1'b1;
+                        state  <= S_LOAD_A;
                     end
                 end
 
