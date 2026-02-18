@@ -7,3 +7,8 @@ obj_dir/
 
 # OS files
 .DS_Store
+
+# Vendored ML workspace local artifacts
+riscv-ml-inference/venv/
+riscv-ml-inference/train/data/
+riscv-ml-inference/runtime/inference

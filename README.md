@@ -33,7 +33,9 @@ This repo (`/Users/peter/verilator`) is the integration and simulation workspace
 
 Sibling repos used by this flow:
 - `/Users/peter/asic-project-fa25-golden-gates`: CPU + SoC RTL (`src/Riscv151.v`, `src/riscv_top.v`, pipeline stages, memory subsystem).
-- `/Users/peter/riscv-ml-inference`: model training/export pipeline (`train/train_and_export.py`, `runtime/weights.h`, `runtime/test_images.h`).
+
+Also vendored into this repo:
+- `riscv-ml-inference/`: model training/export pipeline (`train/train_and_export.py`, `runtime/weights.h`, `runtime/test_images.h`).
 
 ## Architecture Snapshot
 
@@ -141,7 +143,7 @@ Interpretation:
    - Verilator
    - `riscv64-unknown-elf-*`
    - Python 3
-2. Check absolute paths in `Makefile`:
+2. Check local path settings in `Makefile`:
    - `RTL_DIR`
    - `INFER_DIR`
    - `START_S`

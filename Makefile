@@ -3,9 +3,9 @@
 
 # ---- Paths (adjust these to your setup) ----
 RTL_DIR     = /Users/peter/asic-project-fa25-golden-gates/src
-INFER_DIR   = /Users/peter/riscv-ml-inference
+INFER_DIR   = $(CURDIR)/riscv-ml-inference
 START_S     = /Users/peter/asic-project-fa25-golden-gates/tests/bmark/start.s
-LINKER_LD   = /Users/peter/verilator/inference.ld
+LINKER_LD   = $(CURDIR)/inference.ld
 
 # ---- RISC-V toolchain ----
 RISCV       = riscv64-unknown-elf
@@ -19,7 +19,7 @@ VFLAGS      = --cc --exe --build --trace \
               -Dno_cache_mem \
               --top-module riscv_top \
               -I$(RTL_DIR) \
-              -I/Users/peter/verilator/riscv-accelerator
+              -I$(CURDIR)/riscv-accelerator
 
 # ---- RTL source files ----
 RTL_SRCS = \
@@ -41,7 +41,7 @@ RTL_SRCS = \
 	$(RTL_DIR)/Multiplier.sv \
 	$(RTL_DIR)/HazardUnit.sv \
 	$(RTL_DIR)/Opcode.vh \
-	/Users/peter/verilator/riscv-accelerator/MatmulAccelerator.sv
+	$(CURDIR)/riscv-accelerator/MatmulAccelerator.sv
 
 # ---- Targets ----
 .PHONY: all compile_rtl compile_inference run clean
