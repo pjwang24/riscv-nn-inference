@@ -6,8 +6,8 @@
 #include <cstdlib>
 #include <cstring>
 
-// Clock period doesn't matter for Verilator (we manually toggle)
-// We just count cycles.
+// Verilator timing is event-driven; the testbench toggles clk manually.
+// Cycle count is tracked directly.
 
 uint64_t main_time = 0;
 double sc_time_stamp() { return main_time; }
@@ -22,7 +22,7 @@ static bool parse_hex_line(const char *line, uint32_t words[4]) {
     words[i] = 0;
   }
 
-  // Input is big-endian hex text. We build 4 little-endian 32-bit words.
+  // Input is big-endian hex text. The parser reconstructs 4 little-endian 32-bit words.
   for (int i = 0; i < static_cast<int>(len); i++) {
     const char c = line[len - 1 - i];
     if (!std::isxdigit(static_cast<unsigned char>(c))) {
@@ -70,9 +70,9 @@ int main(int argc, char **argv) {
   Vriscv_top *top = new Vriscv_top;
 
   // ---------------------------------------------------------------
-  // Reset phase FIRST — this triggers Verilator's `initial` blocks
-  // which zero all RAM in no_cache_mem. We must do this BEFORE
-  // loading the hex file, or the initial block will wipe our data.
+  // Reset first to trigger Verilator `initial` blocks.
+  // no_cache_mem initialization clears RAM, so program loading
+  // is performed after this reset sequence.
   // ---------------------------------------------------------------
   top->reset = 1;
   top->clk = 0;
@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
 
   // objcopy -O binary strips the base address. The binary starts at VMA 0x2000
   // (PC_RESET). no_cache_mem uses 128-bit (16-byte) indexed RAM, so
-  // 0x2000 / 16 = 512. We must load at that offset to match the CPU.
+  // 0x2000 / 16 = 512. Loading starts at that offset to match the CPU reset PC.
   const int mem_depth =
       sizeof(top->rootp->riscv_top__DOT__mem__DOT__icache__DOT__ram) /
       sizeof(top->rootp->riscv_top__DOT__mem__DOT__icache__DOT__ram[0]);

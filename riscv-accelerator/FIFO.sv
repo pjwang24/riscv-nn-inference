@@ -8,7 +8,7 @@
  *
  * Notes:
  * - dout is only guaranteed valid on cycles where `pop && !empty` is true.
- *   (You can still read it any time, but only treat it as valid on pop.)
+ *   (dout may be read on any cycle; validity is guaranteed only on pop.)
  * - count/full/empty reflect the FIFO state *after* the clock edge updates.
  */
 
