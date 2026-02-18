@@ -9,11 +9,13 @@ def main():
     parser.add_argument('-w', '--width', type=int, default=32, help='Width in bits (default: 32)')
     args = parser.parse_args()
 
+    if args.width <= 0 or (args.width % 8) != 0:
+        print("Error: --width must be a positive multiple of 8 bits", file=sys.stderr)
+        sys.exit(2)
+
     try:
         with open(args.input_file, 'rb') as f_in, open(args.output_file, 'w') as f_out:
             width_bytes = args.width // 8
-            if width_bytes < 1:
-                width_bytes = 1
             
             while True:
                 chunk = f_in.read(width_bytes)
@@ -49,14 +51,12 @@ def main():
                 # MSB is b15.
                 # So we should print b15, b14, ..., b0.
                 
-                hex_str = ""
-                for b in reversed(chunk):
-                    hex_str += "{:02x}".format(b)
+                hex_str = ''.join(f"{b:02x}" for b in reversed(chunk))
                 
                 f_out.write(hex_str + '\n')
                 
-    except FileNotFoundError:
-        print(f"Error: File not found")
+    except OSError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

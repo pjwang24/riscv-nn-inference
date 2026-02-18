@@ -20,8 +20,8 @@ void *memset(void *s, int c, size_t n) {
 }
 
 void *memcpy(void *dest, const void *src, size_t n) {
-  char *d = dest;
-  const char *s = src;
+  unsigned char *d = (unsigned char *)dest;
+  const unsigned char *s = (const unsigned char *)src;
   while (n--)
     *d++ = *s++;
   return dest;
@@ -136,6 +136,29 @@ static void layer_matmul_batch(const int8_t *W_interleaved,
   }
 }
 
+// Division helper for quantization scaling without relying on DIV instruction.
+static int32_t soft_div(int32_t numer, int32_t denom) {
+  if (denom == 0) {
+    return 0;
+  }
+
+  const bool neg = ((numer < 0) ^ (denom < 0));
+  uint64_t a = (numer < 0) ? (uint64_t)(-(int64_t)numer) : (uint64_t)numer;
+  const uint64_t b =
+      (denom < 0) ? (uint64_t)(-(int64_t)denom) : (uint64_t)denom;
+
+  uint32_t q = 0;
+  for (int i = 31; i >= 0; i--) {
+    const uint64_t shifted = b << i;
+    if (shifted <= a) {
+      a -= shifted;
+      q |= (1u << i);
+    }
+  }
+
+  return neg ? -(int32_t)q : (int32_t)q;
+}
+
 static void fused_bias_relu_rescale(int32_t *raw, const int32_t *bias,
                                     int8_t *out, int size) {
   int32_t max_val = 0;
@@ -151,7 +174,8 @@ static void fused_bias_relu_rescale(int32_t *raw, const int32_t *bias,
       out[i] = 0;
     return;
   }
-  int32_t recip = (127 << 16) / max_val;
+  // Replace hardware division with soft_div
+  int32_t recip = soft_div((127 << 16), max_val);
   for (int i = 0; i < size; i++) {
     out[i] = (int8_t)((raw[i] * recip) >> 16);
   }
@@ -183,16 +207,12 @@ int32_t l2_raw[BATCH_SIZE][OUTPUT_SIZE];
 // Aligned input buffer for batch
 int8_t __attribute__((aligned(16))) batch_inputs_aligned[BATCH_SIZE][784];
 
-void main() {
+int main(void) {
   // 1. Prepare Weights
   interleave_weights(fc1_weight, fc1_weights_hw, 128, 784);
   interleave_weights(fc2_weight, fc2_weights_hw, 10, 128);
 
   int correct = 0;
-  int total = NUM_TEST_IMAGES - (NUM_TEST_IMAGES % BATCH_SIZE);
-  // We only process multiples of 4 for now to be safe, or handle remainder
-  // loop.
-
   for (int i = 0; i < NUM_TEST_IMAGES; i += BATCH_SIZE) {
     int batch = (NUM_TEST_IMAGES - i >= BATCH_SIZE) ? BATCH_SIZE
                                                     : (NUM_TEST_IMAGES - i);
@@ -247,4 +267,6 @@ void main() {
 
   for (;;)
     asm volatile("nop");
+
+  return 0;
 }

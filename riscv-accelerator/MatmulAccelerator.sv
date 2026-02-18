@@ -49,12 +49,15 @@ module MatmulAccelerator (
     reg [31:0] cfg_n_dim;    // dot-product length
 
     // ---- State machine ----
-    localparam S_IDLE        = 3'd0;
-    localparam S_LOAD_W      = 3'd1;  // DMA read weights into lane SRAMs
-    localparam S_LOAD_W_WAIT = 3'd2;  // wait for read response
-    localparam S_COMPUTE     = 3'd3;  // DMA read input + MAC
-    localparam S_COMP_WAIT   = 3'd4;  // wait for read response
-    localparam S_DONE        = 3'd5;
+    localparam S_IDLE        = 4'd0;
+    localparam S_LOAD_W      = 4'd1;  // DMA read weights into lane SRAMs
+    localparam S_LOAD_W_WAIT = 4'd2;  // wait for read response
+    localparam S_COMPUTE     = 4'd3;  // DMA read input + MAC
+    localparam S_COMP_WAIT   = 4'd4;  // wait for read response
+    localparam S_COMP_1      = 4'd5;
+    localparam S_COMP_2      = 4'd6;
+    localparam S_COMP_3      = 4'd7;
+    localparam S_DONE        = 4'd8;
 
     reg [3:0]  state;
     reg        done_flag;
@@ -62,7 +65,6 @@ module MatmulAccelerator (
     // ---- DMA counters ----
     reg [31:0] w_word_cnt;    // which word we're loading for weights
     reg [31:0] n_words;       // cfg_n_dim / 4
-    reg [1:0]  lane_cnt;      // which lane (0–3) during weight load
     reg [31:0] x_word_cnt;    // which word during compute phase
 
     // ---- 4 MAC lanes ----
@@ -99,6 +101,7 @@ module MatmulAccelerator (
                 8'h08: cfg_x_addr <= mmio_wdata;
                 8'h0C: cfg_m_dim  <= mmio_wdata;
                 8'h10: cfg_n_dim  <= mmio_wdata;
+                default: ;
             endcase
         end
     end
@@ -117,7 +120,6 @@ module MatmulAccelerator (
             acc_2      <= 0;
             acc_3      <= 0;
             w_word_cnt <= 0;
-            lane_cnt   <= 0;
             x_word_cnt <= 0;
             n_words    <= 0;
             x_buffer   <= 0;
@@ -138,7 +140,6 @@ module MatmulAccelerator (
                             done_flag  <= 0;
                             n_words    <= cfg_n_dim >> 2;
                             w_word_cnt <= 0;
-                            lane_cnt   <= 0;
                             
                             // Check for Skip Load (Bit 2)
                             if (mmio_wdata[2]) begin
@@ -212,10 +213,10 @@ module MatmulAccelerator (
                     if (cfg_m_dim > 3) acc_3 <= acc_3 + packed_dot(w_sram_3[x_word_cnt], dma_rdata[31:0]);
 
                     x_word_cnt <= x_word_cnt + 1;
-                    state <= 3'd6; // S_COMP_1 (Need new state constant)
+                    state <= S_COMP_1;
                 end
 
-                3'd6: begin // S_COMP_1: Process Word 1
+                S_COMP_1: begin // Process Word 1
                     acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], x_buffer[31:0]);
                     if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], x_buffer[31:0]);
                     if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], x_buffer[31:0]);
@@ -223,10 +224,10 @@ module MatmulAccelerator (
 
                     x_buffer <= x_buffer >> 32;
                     x_word_cnt <= x_word_cnt + 1;
-                    state <= 3'd7; // S_COMP_2
+                    state <= S_COMP_2;
                 end
 
-                3'd7: begin // S_COMP_2: Process Word 2
+                S_COMP_2: begin // Process Word 2
                     acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], x_buffer[31:0]);
                     if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], x_buffer[31:0]);
                     if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], x_buffer[31:0]);
@@ -234,18 +235,10 @@ module MatmulAccelerator (
 
                     x_buffer <= x_buffer >> 32;
                     x_word_cnt <= x_word_cnt + 1;
-                    state <= 3'd4; // S_COMP_3 (Reuse COMP_WAIT? No) -> Use new state S_COMP_3? 
-                                   // Let's use 3'd4 was S_COMP_WAIT.
-                                   // I need more states. Range is [2:0] (8 states).
-                                   // S_IDLE=0, LOAD=1, LOAD_W=2, COMP=3, COMP_W=4, DONE=5.
-                                   // I have 6 states. 0,1,2,3,4,5.
-                                   // I need COMP_1, COMP_2, COMP_3.
-                                   // Total 9 states. 3 bits is not enough.
-                                   // **ACTION**: Expand state register to 4 bits.
-                    state <= 4'd8; // S_COMP_3
-                 end
+                    state <= S_COMP_3;
+                end
                 
-                 4'd8: begin // S_COMP_3
+                S_COMP_3: begin // Process Word 3
                     acc_0 <= acc_0 + packed_dot(w_sram_0[x_word_cnt], x_buffer[31:0]);
                     if (cfg_m_dim > 1) acc_1 <= acc_1 + packed_dot(w_sram_1[x_word_cnt], x_buffer[31:0]);
                     if (cfg_m_dim > 2) acc_2 <= acc_2 + packed_dot(w_sram_2[x_word_cnt], x_buffer[31:0]);
@@ -269,22 +262,33 @@ module MatmulAccelerator (
                     if (mmio_wr && reg_offset == 8'h00) begin
                         if (mmio_wdata[0]) begin
                             // New start
-                            state      <= S_LOAD_W;
                             done_flag  <= 0;
                             n_words    <= cfg_n_dim >> 2;
                             w_word_cnt <= 0;
-                            lane_cnt   <= 0;
+                            x_word_cnt <= 0;
                             acc_0      <= 0;
                             acc_1      <= 0;
                             acc_2      <= 0;
                             acc_3      <= 0;
-                            dma_addr   <= cfg_w_addr;
-                            dma_re     <= 1;
+                            if (mmio_wdata[2]) begin
+                                // Skip weight load and immediately compute
+                                state    <= S_COMPUTE;
+                                dma_addr <= cfg_x_addr;
+                                dma_re   <= 1;
+                            end else begin
+                                state    <= S_LOAD_W;
+                                dma_addr <= cfg_w_addr;
+                                dma_re   <= 1;
+                            end
                         end else begin
                             state     <= S_IDLE;
                             done_flag <= 0;
                         end
                     end
+                end
+                default: begin
+                    state <= S_IDLE;
+                    dma_re <= 0;
                 end
             endcase
         end
