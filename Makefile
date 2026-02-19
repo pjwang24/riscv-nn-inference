@@ -14,9 +14,12 @@ GCC_OPTS    = -march=rv32im_zicsr -mabi=ilp32 -static -mcmodel=medany \
 
 # ---- Verilator settings ----
 VERILATOR   = verilator
+ENABLE_DUAL_ISSUE ?= 1
 VFLAGS      = --cc --exe --build --trace \
               -Wno-fatal \
               -Dno_cache_mem \
+              $(if $(filter 1,$(ENABLE_DUAL_ISSUE)),-DENABLE_DUAL_ISSUE,) \
+              $(EXTRA_VFLAGS) \
               --top-module riscv_top \
               -I$(RTL_DIR) \
               -I$(CURDIR)/riscv-accelerator
@@ -63,7 +66,7 @@ obj_dir/Vriscv_top: sim_main.cpp $(RTL_SRCS)
 
 # Step 3: Run
 run: obj_dir/Vriscv_top inference.hex
-	./obj_dir/Vriscv_top +loadmem=inference.hex +max-cycles=500000000
+	./obj_dir/Vriscv_top +loadmem=inference.hex +max-cycles=500000000 $(EXTRA_FLAGS)
 
 clean:
 	rm -rf obj_dir inference.elf inference.bin inference.hex inference.dump

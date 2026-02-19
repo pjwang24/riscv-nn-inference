@@ -52,11 +52,23 @@ int main(int argc, char **argv) {
   // Parse arguments
   const char *hex_file = nullptr;
   uint64_t max_cycles = 50000000; // 50M cycles default
+  bool loop_trace = false;
+  uint32_t loop_start = 0x00000000u;
+  uint32_t loop_end = 0xffffffffu;
+  uint64_t loop_max = 0; // 0 = unlimited
   for (int i = 1; i < argc; i++) {
     if (strncmp(argv[i], "+loadmem=", 9) == 0) {
       hex_file = argv[i] + 9;
     } else if (strncmp(argv[i], "+max-cycles=", 12) == 0) {
       max_cycles = atoll(argv[i] + 12);
+    } else if (strcmp(argv[i], "+loop-trace") == 0) {
+      loop_trace = true;
+    } else if (strncmp(argv[i], "+loop-start=", 12) == 0) {
+      loop_start = static_cast<uint32_t>(strtoull(argv[i] + 12, nullptr, 0));
+    } else if (strncmp(argv[i], "+loop-end=", 10) == 0) {
+      loop_end = static_cast<uint32_t>(strtoull(argv[i] + 10, nullptr, 0));
+    } else if (strncmp(argv[i], "+loop-max=", 10) == 0) {
+      loop_max = strtoull(argv[i] + 10, nullptr, 0);
     }
   }
 
@@ -144,6 +156,13 @@ int main(int argc, char **argv) {
 
   // Run simulation
   uint64_t cycle_count = 0;
+  uint64_t cnt_lane1_issue = 0;
+  uint64_t cnt_dual_issued = 0;
+  uint64_t cnt_flush_id = 0;
+  uint64_t cnt_front_freeze = 0;
+  uint64_t cnt_retired0 = 0;
+  uint64_t cnt_retired1 = 0;
+  uint64_t loop_lines = 0;
 
   while (cycle_count < max_cycles) {
     // Rising edge
@@ -151,6 +170,55 @@ int main(int argc, char **argv) {
     top->eval();
     main_time++;
     cycle_count++;
+
+    const uint32_t pc_f = top->rootp->riscv_top__DOT__cpu__DOT__u_fetch__DOT__pc_F;
+    const uint32_t pc_id = top->rootp->riscv_top__DOT__cpu__DOT__pc_id;
+    const uint32_t i0 = top->rootp->riscv_top__DOT__cpu__DOT__inst_id;
+    const uint32_t i1 = top->rootp->riscv_top__DOT__cpu__DOT__inst_id_1;
+    const int flush_id = top->rootp->riscv_top__DOT__cpu__DOT__flush_id ? 1 : 0;
+    const int front_freeze = top->rootp->riscv_top__DOT__cpu__DOT__load_use_hazard ? 1 : 0;
+    const int lane1_issue_en = top->rootp->riscv_top__DOT__cpu__DOT__issue_ex_1_r ? 1 : 0;
+    const int dual_issued = lane1_issue_en && !flush_id && !front_freeze;
+    const uint32_t fwd_a0 = top->rootp->riscv_top__DOT__cpu__DOT__fwd_a_0_sel;
+    const uint32_t fwd_b0 = top->rootp->riscv_top__DOT__cpu__DOT__fwd_b_0_sel;
+    const uint32_t inst_wb_0 = top->rootp->riscv_top__DOT__cpu__DOT__inst_wb;
+    const uint32_t inst_wb_1 = top->rootp->riscv_top__DOT__cpu__DOT__inst_wb_1;
+    const int valid_wb_1 = top->rootp->riscv_top__DOT__cpu__DOT__valid_wb_1 ? 1 : 0;
+    const uint32_t rd_wb0 = (inst_wb_0 >> 7) & 0x1f;
+    const uint32_t rd_wb1 = (inst_wb_1 >> 7) & 0x1f;
+    const uint32_t alu_ex1 = top->rootp->riscv_top__DOT__cpu__DOT__alu_out_ex_1;
+    const uint32_t inst_ex0 = top->rootp->riscv_top__DOT__cpu__DOT__inst_ex_r;
+    const uint32_t inst_ex1 = top->rootp->riscv_top__DOT__cpu__DOT__inst_ex_1_r;
+    const uint32_t rd_ex0 = (inst_ex0 >> 7) & 0x1f;
+    const uint32_t rd_ex1 = (inst_ex1 >> 7) & 0x1f;
+
+    cnt_lane1_issue += lane1_issue_en;
+    cnt_dual_issued += dual_issued;
+    cnt_flush_id += flush_id;
+    cnt_front_freeze += front_freeze;
+    if (inst_wb_0 != 0 && inst_wb_0 != 0x00000013u) {
+      cnt_retired0++;
+    }
+    if (valid_wb_1 && inst_wb_1 != 0 && inst_wb_1 != 0x00000013u) {
+      cnt_retired1++;
+    }
+
+    if (cycle_count <= 20) {
+      fprintf(stderr,
+              "[C%llu] PC_F=%08x PC_ID=%08x I0=%08x I1=%08x flush_id=%d freeze=%d dual_issued=%d lane1_issue_en=%d\n",
+              cycle_count, pc_f, pc_id, i0, i1, flush_id, front_freeze,
+              dual_issued, lane1_issue_en);
+    }
+
+    if (loop_trace && (pc_f >= loop_start) && (pc_f <= loop_end) &&
+        ((loop_max == 0) || (loop_lines < loop_max))) {
+      fprintf(stderr,
+              "[loop] C=%llu PC_F=%08x PC_ID=%08x I0=%08x I1=%08x flush_id=%d freeze=%d dual_issued=%d lane1_issue_en=%d fwd_a0=%u fwd_b0=%u rd_wb0=%u rd_wb1=%u alu_ex1=%08x rd_ex0=%u rd_ex1=%u\n",
+              cycle_count, pc_f, pc_id, i0, i1, flush_id, front_freeze,
+              dual_issued, lane1_issue_en, fwd_a0, fwd_b0, rd_wb0, rd_wb1,
+              alu_ex1, rd_ex0, rd_ex1);
+      loop_lines++;
+    }
 
     // Check CSR (tohost)
     uint32_t csr_val = top->csr;
@@ -179,6 +247,14 @@ int main(int argc, char **argv) {
   }
 
   fprintf(stderr, "Total cycles: %llu\n", cycle_count);
+  fprintf(stderr,
+          "Counter: dual_issued=%llu lane1_issue_en=%llu flush_id=%llu freeze=%llu\n",
+          cnt_dual_issued, cnt_lane1_issue, cnt_flush_id, cnt_front_freeze);
+  const uint64_t retired_total = cnt_retired0 + cnt_retired1;
+  const double ipc = (cycle_count == 0) ? 0.0 : ((double)retired_total / (double)cycle_count);
+  fprintf(stderr,
+          "Retired: lane0=%llu lane1=%llu total=%llu IPC=%.6f\n",
+          cnt_retired0, cnt_retired1, retired_total, ipc);
 
   top->final();
   delete top;
