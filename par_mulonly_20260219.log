@@ -1,0 +1,68 @@
+OpenLane v1.0.2 (ff5509f65b17bfa4068d5336495ab1718987ff69)
+All rights reserved. (c) 2020-2025 Efabless Corporation and contributors.
+Available under the Apache License, version 2.0. See the LICENSE file for more details.
+
+[INFO]: Using configuration in 'designs/riscv_top/config.tcl'...
+[INFO]: PDK Root: /Users/peter/.ciel
+[INFO]: Process Design Kit: sky130A
+[INFO]: Standard Cell Library: sky130_fd_sc_hd
+[INFO]: Optimization Standard Cell Library: sky130_fd_sc_hd
+[WARNING]: SYNTH_MAX_FANOUT is now deprecated; use MAX_FANOUT_CONSTRAINT instead.
+[INFO]: Run Directory: /openlane/designs/riscv_top/runs/par_mulonly_20260219
+[INFO]: Saving runtime environment...
+[INFO]: Preparing LEF files for the nom corner...
+[INFO]: Preparing LEF files for the min corner...
+[INFO]: Preparing LEF files for the max corner...
+[INFO]: Running linter (Verilator) (log: designs/riscv_top/runs/par_mulonly_20260219/logs/synthesis/linter.log)...
+[INFO]: 0 errors found by linter
+[WARNING]: 36 warnings found by linter
+[STEP 1]
+[INFO]: Running Synthesis (log: designs/riscv_top/runs/par_mulonly_20260219/logs/synthesis/1-synthesis.log)...
+[STEP 2]
+[INFO]: Running Single-Corner Static Timing Analysis (log: designs/riscv_top/runs/par_mulonly_20260219/logs/synthesis/2-sta.log)...
+[STEP 3]
+[INFO]: Running Initial Floorplanning (log: designs/riscv_top/runs/par_mulonly_20260219/logs/floorplan/3-initial_fp.log)...
+[INFO]: Floorplanned with width 1188.64 and height 1177.76.
+[STEP 4]
+[INFO]: Running IO Placement...
+[STEP 5]
+[INFO]: Performing Manual Macro Placement (log: designs/riscv_top/runs/par_mulonly_20260219/logs/placement/5-macro_placement.log)...
+[ERROR]: during executing: "openroad -exit -no_init -python /openlane/scripts/odbpy/manual_macro_place.py --config /openlane/designs/riscv_top/runs/par_mulonly_20260219/tmp/placement/macro_placement.cfg --fixed --input-lef /openlane/designs/riscv_top/runs/par_mulonly_20260219/tmp/merged.nom.lef --output-def /openlane/designs/riscv_top/runs/par_mulonly_20260219/tmp/floorplan/4-io.macro_placement.def --output /openlane/designs/riscv_top/runs/par_mulonly_20260219/tmp/floorplan/4-io.macro_placement.odb /openlane/designs/riscv_top/runs/par_mulonly_20260219/tmp/floorplan/4-io.odb |& tee /dev/null /openlane/designs/riscv_top/runs/par_mulonly_20260219/logs/placement/5-macro_placement.log"
+[ERROR]: Exit code: 1
+[ERROR]: Last 10 lines:
+  File "/usr/local/lib/python3.6/site-packages/click/core.py", line 1395, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+  File "/usr/local/lib/python3.6/site-packages/click/core.py", line 754, in invoke
+    return __callback(*args, **kwargs)
+  File "/openlane/scripts/odbpy/reader.py", line 76, in wrapper
+    function(**kwargs)
+  File "/openlane/scripts/odbpy/manual_macro_place.py", line 102, in manual_macro_place
+    assert not macros, ("Macros not found:", macros)
+AssertionError: ('Macros not found:', {'u_fetch.u_btb.sram_target': ['100000', '100000', 'N'], 'u_fetch.u_btb.sram_tag': ['100000', '600000', 'N']})
+child process exited abnormally
+
+[ERROR]: Step 5 (floorplan) failed with error:
+-code 1 -level 0 -errorcode NONE -errorinfo {
+    while executing
+"throw_error"
+    (procedure "try_exec" line 17)
+    invoked from within
+"try_exec $::env(OPENROAD_BIN) -exit -no_init -python {*}$args  --input-lef $::env(MERGED_LEF)  --output-def $arg_values(-output_def)  --output $arg_va..."
+    (procedure "manipulate_layout" line 19)
+    invoked from within
+"manipulate_layout $::env(SCRIPTS_DIR)/odbpy/manual_macro_place.py -indexed_log $log  -output_def $save_def  -output $save_db  -input $prev_db  {*}$arg..."
+    (procedure "manual_macro_placement" line 24)
+    invoked from within
+"manual_macro_placement -f"
+    (procedure "run_floorplan" line 43)
+    invoked from within
+"run_floorplan"} -errorline 1
+[INFO]: Saving current set of views in 'designs/riscv_top/runs/par_mulonly_20260219/results/final'...
+[INFO]: Generating final set of reports...
+[INFO]: Created manufacturability report at 'designs/riscv_top/runs/par_mulonly_20260219/reports/manufacturability.rpt'.
+[INFO]: Created metrics report at 'designs/riscv_top/runs/par_mulonly_20260219/reports/metrics.csv'.
+[INFO]: Saving runtime environment...
+[ERROR]: Flow failed.
+[INFO]: The failure may have been because of the following warnings:
+[WARNING]: 36 warnings found by linter
+

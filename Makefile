@@ -11,6 +11,7 @@ LINKER_LD   = $(CURDIR)/inference.ld
 RISCV       = riscv64-unknown-elf
 GCC_OPTS    = -march=rv32im_zicsr -mabi=ilp32 -static -mcmodel=medany \
               -fvisibility=hidden -nostdlib -nostartfiles -Wl,--build-id=none -O3
+CFLAGS_EXTRA ?=
 
 # ---- Verilator settings ----
 VERILATOR   = verilator
@@ -53,7 +54,7 @@ all: run
 
 # Step 1: Compile inference_bare.c -> hex file
 inference.hex: inference_bare.c $(INFER_DIR)/runtime/weights.h $(INFER_DIR)/runtime/test_images.h $(START_S) $(LINKER_LD)
-	$(RISCV)-gcc $(GCC_OPTS) -I$(INFER_DIR)/runtime -T $(LINKER_LD) $(START_S) inference_bare.c -o inference.elf
+	$(RISCV)-gcc $(GCC_OPTS) $(CFLAGS_EXTRA) -I$(INFER_DIR)/runtime -T $(LINKER_LD) $(START_S) inference_bare.c -o inference.elf
 	$(RISCV)-objdump -D -Mnumeric inference.elf > inference.dump
 	$(RISCV)-objcopy inference.elf -O binary inference.bin
 	python3 bin2hex.py -w 128 inference.bin inference.hex
@@ -67,6 +68,14 @@ obj_dir/Vriscv_top: sim_main.cpp $(RTL_SRCS)
 # Step 3: Run
 run: obj_dir/Vriscv_top inference.hex
 	./obj_dir/Vriscv_top +loadmem=inference.hex +max-cycles=500000000 $(EXTRA_FLAGS)
+
+run_ilp_single:
+	$(MAKE) clean
+	$(MAKE) run ENABLE_DUAL_ISSUE=0 CFLAGS_EXTRA="-DILP_MICROBENCH"
+
+run_ilp_dual:
+	$(MAKE) clean
+	$(MAKE) run ENABLE_DUAL_ISSUE=1 CFLAGS_EXTRA="-DILP_MICROBENCH"
 
 clean:
 	rm -rf obj_dir inference.elf inference.bin inference.hex inference.dump

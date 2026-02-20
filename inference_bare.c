@@ -31,6 +31,49 @@ void *memcpy(void *dest, const void *src, size_t n) {
 #define HIDDEN_SIZE 128
 #define OUTPUT_SIZE 10
 
+#ifdef ILP_MICROBENCH
+#ifndef ILP_ITERS
+#define ILP_ITERS 250000u
+#endif
+
+static int run_ilp_microbench(void) {
+  uint32_t a0 = 0x13579bdfu;
+  uint32_t a1 = 0x2468ace0u;
+  uint32_t b0 = 0xdeadbeefu;
+  uint32_t b1 = 0x31415927u;
+  uint32_t acc0 = 0u;
+  uint32_t acc1 = 0u;
+
+  // Two mostly independent ALU streams to expose ILP to dual-issue pairing.
+  for (uint32_t i = 0; i < ILP_ITERS; i++) {
+    uint32_t t0 = ((a0 << 1) ^ b0) + (i * 3u + 0x9e3779b9u);
+    uint32_t t1 = ((a1 << 2) ^ b1) + (i * 5u + 0x7f4a7c15u);
+
+    acc0 += t0;
+    acc1 += t1;
+
+    a0 += (b0 ^ (t1 >> 3)) + 0x11u;
+    a1 += (b1 ^ (t0 >> 2)) + 0x33u;
+
+    b0 = (b0 << 3) ^ (a0 >> 1) ^ 0xa5a5a5a5u;
+    b1 = (b1 << 5) ^ (a1 >> 2) ^ 0x5a5a5a5au;
+  }
+
+  uint32_t rot = (acc1 << 1) | (acc1 >> 31);
+  uint32_t checksum = acc0 ^ rot ^ a0 ^ (a1 >> 3) ^ b0 ^ (b1 << 7);
+  const uint32_t expected = 0x9c89e29du;
+
+  if (checksum == expected) {
+    csr_tohost(1);
+  } else {
+    csr_tohost(2);
+  }
+
+  for (;;)
+    asm volatile("nop");
+}
+#endif
+
 // =============================================================
 // Matmul Accelerator MMIO (UPDATED MAP: results start at 0x18)
 // =============================================================
@@ -251,6 +294,10 @@ int32_t *ptr_l1_raw[BATCH_SIZE];
 int32_t *ptr_l2_raw[BATCH_SIZE];
 
 int main(void) {
+#ifdef ILP_MICROBENCH
+  return run_ilp_microbench();
+#endif
+
   // FC1: 128x784 => blocks=32, bytes_per_block = 784*4
   for (int i = 0; i < 128; i += 4) {
     int blk = i / 4;
