@@ -4,7 +4,7 @@
 # ---- Paths (adjust these to your setup) ----
 RTL_DIR     = /Users/peter/asic-project-fa25-golden-gates/src
 INFER_DIR   = $(CURDIR)/riscv-ml-inference
-START_S     = /Users/peter/asic-project-fa25-golden-gates/tests/bmark/start.s
+START_S     = $(CURDIR)/benchmarks/bmark/start.s
 LINKER_LD   = $(CURDIR)/inference.ld
 
 # ---- RISC-V toolchain ----
@@ -48,7 +48,7 @@ RTL_SRCS = \
 	$(CURDIR)/riscv-accelerator/MatmulAccelerator.sv
 
 # ---- Targets ----
-.PHONY: all compile_rtl compile_inference run clean
+.PHONY: all compile_rtl compile_inference run run_bench clean clean_bench
 
 all: run
 
@@ -69,6 +69,26 @@ obj_dir/Vriscv_top: sim_main.cpp $(RTL_SRCS)
 run: obj_dir/Vriscv_top inference.hex
 	./obj_dir/Vriscv_top +loadmem=inference.hex +max-cycles=500000000 $(EXTRA_FLAGS)
 
+# Generic benchmark compile/run path (independent from inference_bare.c)
+BENCH_NAME ?= bmark
+BENCH_SRC  ?= $(CURDIR)/benchmarks/bmark/fib.c
+BENCH_LD   ?= $(CURDIR)/benchmarks/bmark/common.ld
+BENCH_START ?= $(CURDIR)/benchmarks/bmark/start.s
+MAX_CYCLES ?= 500000000
+BENCH_ELF  := $(BENCH_NAME).elf
+BENCH_BIN  := $(BENCH_NAME).bin
+BENCH_HEX  := $(BENCH_NAME).hex
+BENCH_DUMP := $(BENCH_NAME).dump
+
+$(BENCH_HEX): $(BENCH_SRC) $(BENCH_START) $(BENCH_LD)
+	$(RISCV)-gcc $(GCC_OPTS) $(CFLAGS_EXTRA) -I$(INFER_DIR)/runtime -T $(BENCH_LD) $(BENCH_START) $(BENCH_SRC) -o $(BENCH_ELF)
+	$(RISCV)-objdump -D -Mnumeric $(BENCH_ELF) > $(BENCH_DUMP)
+	$(RISCV)-objcopy $(BENCH_ELF) -O binary $(BENCH_BIN)
+	python3 bin2hex.py -w 128 $(BENCH_BIN) $(BENCH_HEX)
+
+run_bench: obj_dir/Vriscv_top $(BENCH_HEX)
+	./obj_dir/Vriscv_top +loadmem=$(BENCH_HEX) +max-cycles=$(MAX_CYCLES) $(EXTRA_FLAGS)
+
 run_ilp_single:
 	$(MAKE) clean
 	$(MAKE) run ENABLE_DUAL_ISSUE=0 CFLAGS_EXTRA="-DILP_MICROBENCH"
@@ -79,3 +99,6 @@ run_ilp_dual:
 
 clean:
 	rm -rf obj_dir inference.elf inference.bin inference.hex inference.dump
+
+clean_bench:
+	rm -f *.elf *.bin *.hex *.dump

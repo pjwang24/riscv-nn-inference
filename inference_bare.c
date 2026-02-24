@@ -265,21 +265,152 @@ static void fused_bias_relu_rescale(int32_t *raw, const int32_t *bias,
     out[i] = (int8_t)((raw[i] * recip) >> 16);
 }
 
+static void fused_bias_relu_rescale_4(int32_t *raw0, int32_t *raw1,
+                                      int32_t *raw2, int32_t *raw3,
+                                      const int32_t *bias, int8_t *out0,
+                                      int8_t *out1, int8_t *out2, int8_t *out3,
+                                      int size) {
+  int32_t max0 = 0, max1 = 0, max2 = 0, max3 = 0;
+  for (int i = 0; i < size; i++) {
+    const int32_t b = bias[i];
+
+    int32_t v0 = raw0[i] + b;
+    int32_t v1 = raw1[i] + b;
+    int32_t v2 = raw2[i] + b;
+    int32_t v3 = raw3[i] + b;
+
+    v0 = v0 & ~(v0 >> 31);
+    v1 = v1 & ~(v1 >> 31);
+    v2 = v2 & ~(v2 >> 31);
+    v3 = v3 & ~(v3 >> 31);
+
+    raw0[i] = v0;
+    raw1[i] = v1;
+    raw2[i] = v2;
+    raw3[i] = v3;
+
+    if (v0 > max0)
+      max0 = v0;
+    if (v1 > max1)
+      max1 = v1;
+    if (v2 > max2)
+      max2 = v2;
+    if (v3 > max3)
+      max3 = v3;
+  }
+
+  const int nz0 = (max0 != 0);
+  const int nz1 = (max1 != 0);
+  const int nz2 = (max2 != 0);
+  const int nz3 = (max3 != 0);
+
+  const int32_t recip0 = nz0 ? soft_div((127 << 16), max0) : 0;
+  const int32_t recip1 = nz1 ? soft_div((127 << 16), max1) : 0;
+  const int32_t recip2 = nz2 ? soft_div((127 << 16), max2) : 0;
+  const int32_t recip3 = nz3 ? soft_div((127 << 16), max3) : 0;
+
+  for (int i = 0; i < size; i++) {
+    out0[i] = nz0 ? (int8_t)((raw0[i] * recip0) >> 16) : 0;
+    out1[i] = nz1 ? (int8_t)((raw1[i] * recip1) >> 16) : 0;
+    out2[i] = nz2 ? (int8_t)((raw2[i] * recip2) >> 16) : 0;
+    out3[i] = nz3 ? (int8_t)((raw3[i] * recip3) >> 16) : 0;
+  }
+}
+
 static void add_bias(int32_t *out, const int32_t *bias, int size) {
-  for (int i = 0; i < size; i++)
+  int i = 0;
+  for (; i + 3 < size; i += 4) {
+    out[i + 0] += bias[i + 0];
+    out[i + 1] += bias[i + 1];
+    out[i + 2] += bias[i + 2];
+    out[i + 3] += bias[i + 3];
+  }
+  for (; i < size; i++)
     out[i] += bias[i];
 }
 
 static int argmax(int32_t *x, int size) {
-  int max_idx = 0;
-  int32_t max_val = x[0];
-  for (int i = 1; i < size; i++) {
-    if (x[i] > max_val) {
-      max_val = x[i];
-      max_idx = i;
+  if (size <= 1)
+    return 0;
+
+  int max_idx0 = 0;
+  int max_idx1 = 1;
+  int32_t max_val0 = x[0];
+  int32_t max_val1 = x[1];
+
+  int i = 2;
+  for (; i + 1 < size; i += 2) {
+    const int32_t v0 = x[i];
+    const int32_t v1 = x[i + 1];
+    if (v0 > max_val0) {
+      max_val0 = v0;
+      max_idx0 = i;
+    }
+    if (v1 > max_val1) {
+      max_val1 = v1;
+      max_idx1 = i + 1;
     }
   }
-  return max_idx;
+  if (i < size) {
+    const int32_t v = x[i];
+    if (v > max_val0) {
+      max_val0 = v;
+      max_idx0 = i;
+    }
+  }
+
+  return (max_val1 > max_val0) ? max_idx1 : max_idx0;
+}
+
+static inline void add_bias_and_argmax_4(int32_t *x0, int32_t *x1, int32_t *x2,
+                                         int32_t *x3, const int32_t *bias,
+                                         int size, int *pred0, int *pred1,
+                                         int *pred2, int *pred3) {
+  int max_idx0 = 0, max_idx1 = 0, max_idx2 = 0, max_idx3 = 0;
+  int32_t max_val0 = x0[0] + bias[0];
+  int32_t max_val1 = x1[0] + bias[0];
+  int32_t max_val2 = x2[0] + bias[0];
+  int32_t max_val3 = x3[0] + bias[0];
+
+  x0[0] = max_val0;
+  x1[0] = max_val1;
+  x2[0] = max_val2;
+  x3[0] = max_val3;
+
+  for (int i = 1; i < size; i++) {
+    const int32_t b = bias[i];
+    const int32_t v0 = x0[i] + b;
+    const int32_t v1 = x1[i] + b;
+    const int32_t v2 = x2[i] + b;
+    const int32_t v3 = x3[i] + b;
+
+    x0[i] = v0;
+    x1[i] = v1;
+    x2[i] = v2;
+    x3[i] = v3;
+
+    if (v0 > max_val0) {
+      max_val0 = v0;
+      max_idx0 = i;
+    }
+    if (v1 > max_val1) {
+      max_val1 = v1;
+      max_idx1 = i;
+    }
+    if (v2 > max_val2) {
+      max_val2 = v2;
+      max_idx2 = i;
+    }
+    if (v3 > max_val3) {
+      max_val3 = v3;
+      max_idx3 = i;
+    }
+  }
+
+  *pred0 = max_idx0;
+  *pred1 = max_idx1;
+  *pred2 = max_idx2;
+  *pred3 = max_idx3;
 }
 
 // =============================================================
@@ -333,8 +464,14 @@ int main(void) {
     layer_dense_4x4(fc1_W_hw, input_batch_hw, ptr_l1_raw, HIDDEN_SIZE,
                     INPUT_SIZE);
 
-    for (int b = 0; b < batch; b++) {
-      fused_bias_relu_rescale(l1_raw[b], fc1_bias, l1_q[b], HIDDEN_SIZE);
+    if (batch == 4) {
+      fused_bias_relu_rescale_4(l1_raw[0], l1_raw[1], l1_raw[2], l1_raw[3],
+                                fc1_bias, l1_q[0], l1_q[1], l1_q[2], l1_q[3],
+                                HIDDEN_SIZE);
+    } else {
+      for (int b = 0; b < batch; b++) {
+        fused_bias_relu_rescale(l1_raw[b], fc1_bias, l1_q[b], HIDDEN_SIZE);
+      }
     }
 
     // Layer 2
@@ -346,11 +483,26 @@ int main(void) {
     // M padded to 12 so blocks align; bias/argmax uses OUTPUT_SIZE=10
     layer_dense_4x4(fc2_W_hw, input_batch_hw, ptr_l2_raw, 12, HIDDEN_SIZE);
 
-    for (int b = 0; b < batch; b++) {
-      add_bias(l2_raw[b], fc2_bias, OUTPUT_SIZE);
-      int pred = argmax(l2_raw[b], OUTPUT_SIZE);
-      if (pred == expected_labels[i + b])
+    if (batch == 4) {
+      int pred0, pred1, pred2, pred3;
+      add_bias_and_argmax_4(l2_raw[0], l2_raw[1], l2_raw[2], l2_raw[3],
+                            fc2_bias, OUTPUT_SIZE, &pred0, &pred1, &pred2,
+                            &pred3);
+      if (pred0 == expected_labels[i + 0])
         correct++;
+      if (pred1 == expected_labels[i + 1])
+        correct++;
+      if (pred2 == expected_labels[i + 2])
+        correct++;
+      if (pred3 == expected_labels[i + 3])
+        correct++;
+    } else {
+      for (int b = 0; b < batch; b++) {
+        add_bias(l2_raw[b], fc2_bias, OUTPUT_SIZE);
+        int pred = argmax(l2_raw[b], OUTPUT_SIZE);
+        if (pred == expected_labels[i + b])
+          correct++;
+      }
     }
   }
 
