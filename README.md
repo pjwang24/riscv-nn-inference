@@ -2,9 +2,25 @@
 
 This repository is the integration and simulation workspace for bare-metal MNIST inference on a custom RISC-V core and hardware accelerator.
 
+## Project Motivation
+
+This project is motivated by a practical systems question
+how much end to end inference speedup can be achieved by co-designing software, CPU microarchitecture, and a domain specific accelerator under realistic hardware constraints.
+
+The baseline software-only path on a small in-order RV32 core is functional but too slow for efficient embedded inference.
+Most execution time is concentrated in dense matrix operations and surrounding control overhead.
+That makes this workload a good target for
+
+- instruction level parallelism improvements in the CPU including dual issue
+- data movement and tiling improvements in the runtime
+- specialized matmul hardware to reduce cycles spent in multiply accumulate loops
+
+The goal is not only to maximize a single benchmark number.
+The goal is to build a reproducible workflow where each optimization can be measured, validated, and traced from RTL behavior to end to end application impact.
+
 ## Scope
 
-- CPU and SoC RTL source lives in `/Users/peter/asic-project-fa25-golden-gates/src`
+- CPU and SoC RTL source is referenced from `../asic-project-fa25-golden-gates/src` by default in this repo `Makefile`
 - This repo provides
   - software workload `inference_bare.c`
   - accelerator RTL wrapper and implementations in `riscv-accelerator/`
@@ -31,7 +47,7 @@ This repository is the integration and simulation workspace for bare-metal MNIST
 Verified on February 25 2026 with
 
 ```bash
-cd /Users/peter/riscv-nn-inference
+cd riscv-nn-inference
 ```
 
 ### Legacy accelerator
