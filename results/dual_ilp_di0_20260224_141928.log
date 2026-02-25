@@ -1,0 +1,30 @@
+riscv64-unknown-elf-gcc -march=rv32im_zicsr -mabi=ilp32 -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles -Wl,--build-id=none -O3  -I/Users/peter/riscv-nn-inference/riscv-ml-inference/runtime -T /Users/peter/riscv-nn-inference/benchmarks/bmark/common.ld /Users/peter/riscv-nn-inference/benchmarks/bmark/start.s /Users/peter/riscv-nn-inference/benchmarks/bmark/dual_ilp.c -o dual_ilp.elf
+riscv64-unknown-elf-objdump -D -Mnumeric dual_ilp.elf > dual_ilp.dump
+riscv64-unknown-elf-objcopy dual_ilp.elf -O binary dual_ilp.bin
+python3 bin2hex.py -w 128 dual_ilp.bin dual_ilp.hex
+./obj_dir/Vriscv_top +loadmem=dual_ilp.hex +max-cycles=500000000 
+Loaded 18 lines from dual_ilp.hex
+[C1] PC_F=00002008 PC_ID=00002000 I0=00080137 I1=004000ef flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C2] PC_F=00002008 PC_ID=00002004 I0=004000ef I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C3] PC_F=00002010 PC_ID=00002008 I0=00000013 I1=00000013 flush_id=1 freeze=0 dual_issued=0 lane1_issue_en=0
+[C4] PC_F=00002008 PC_ID=00002010 I0=00000013 I1=00000013 flush_id=1 freeze=0 dual_issued=0 lane1_issue_en=0
+[C5] PC_F=00002010 PC_ID=00002008 I0=0f1e3637 I1=a5a5a7b7 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C6] PC_F=00002010 PC_ID=0000200c I0=a5a5a7b7 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C7] PC_F=00002018 PC_ID=00002010 I0=9e378737 I1=123456b7 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C8] PC_F=00002018 PC_ID=00002014 I0=123456b7 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C9] PC_F=00002020 PC_ID=00002018 I0=00002eb7 I1=d3c60613 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C10] PC_F=00002020 PC_ID=0000201c I0=d3c60613 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C11] PC_F=00002028 PC_ID=00002020 I0=5a578793 I1=9b970713 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C12] PC_F=00002028 PC_ID=00002024 I0=9b970713 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C13] PC_F=00002030 PC_ID=00002028 I0=67868693 I1=803e8e93 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C14] PC_F=00002030 PC_ID=0000202c I0=803e8e93 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C15] PC_F=00002038 PC_ID=00002030 I0=00b00e13 I1=00700313 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C16] PC_F=00002038 PC_ID=00002034 I0=00700313 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C17] PC_F=00002040 PC_ID=00002038 I0=00500893 I1=00300813 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C18] PC_F=00002040 PC_ID=0000203c I0=00300813 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C19] PC_F=00002048 PC_ID=00002040 I0=010686b3 I1=00171593 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C20] PC_F=00002048 PC_ID=00002044 I0=00171593 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+*** PASSED *** after 84016 simulation cycles
+Total cycles: 84016
+Counter: dual_issued=0 lane1_issue_en=0 flush_id=22 freeze=0
+Retired: lane0=83992 lane1=0 total=83992 IPC=0.999714

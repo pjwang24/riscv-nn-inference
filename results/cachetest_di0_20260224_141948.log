@@ -1,0 +1,31 @@
+riscv64-unknown-elf-gcc -march=rv32im_zicsr -mabi=ilp32 -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles -Wl,--build-id=none -O3  -I/Users/peter/riscv-nn-inference/riscv-ml-inference/runtime -T /Users/peter/riscv-nn-inference/benchmarks/bmark/common.ld /Users/peter/riscv-nn-inference/benchmarks/bmark/start.s /Users/peter/riscv-nn-inference/benchmarks/bmark/cachetest.c -o cachetest.elf
+/opt/homebrew/Cellar/riscv-gnu-toolchain/main/lib/gcc/riscv64-unknown-elf/15.1.0/../../../../riscv64-unknown-elf/bin/ld: warning: cachetest.elf has a LOAD segment with RWX permissions
+riscv64-unknown-elf-objdump -D -Mnumeric cachetest.elf > cachetest.dump
+riscv64-unknown-elf-objcopy cachetest.elf -O binary cachetest.bin
+python3 bin2hex.py -w 128 cachetest.bin cachetest.hex
+./obj_dir/Vriscv_top +loadmem=cachetest.hex +max-cycles=500000000 
+Loaded 11 lines from cachetest.hex
+[C1] PC_F=00002008 PC_ID=00002000 I0=00080137 I1=010000ef flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C2] PC_F=00002008 PC_ID=00002004 I0=010000ef I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C3] PC_F=00002010 PC_ID=00002008 I0=00000013 I1=00000013 flush_id=1 freeze=0 dual_issued=0 lane1_issue_en=0
+[C4] PC_F=00002014 PC_ID=00002010 I0=00000013 I1=00000013 flush_id=1 freeze=0 dual_issued=0 lane1_issue_en=0
+[C5] PC_F=0000201c PC_ID=00002014 I0=00100793 I1=00000717 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C6] PC_F=0000201c PC_ID=00002018 I0=00000717 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C7] PC_F=00002024 PC_ID=0000201c I0=08f72c23 I1=00000717 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C8] PC_F=00002024 PC_ID=00002020 I0=00000717 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C9] PC_F=0000202c PC_ID=00002024 I0=09070713 I1=00000697 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C10] PC_F=0000202c PC_ID=00002028 I0=00000697 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C11] PC_F=00002034 PC_ID=0000202c I0=08c68693 I1=00020597 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C12] PC_F=00002034 PC_ID=00002030 I0=00020597 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C13] PC_F=0000203c PC_ID=00002034 I0=07c58593 I1=00004537 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C14] PC_F=0000203c PC_ID=00002038 I0=00004537 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C15] PC_F=00002044 PC_ID=0000203c I0=4017d613 I1=00f647b3 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C16] PC_F=00002044 PC_ID=00002040 I0=00f647b3 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C17] PC_F=0000204c PC_ID=00002044 I0=00e79793 I1=00a7f7b3 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C18] PC_F=0000204c PC_ID=00002048 I0=00a7f7b3 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C19] PC_F=00002054 PC_ID=0000204c I0=00c7e7b3 I1=00f6a023 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C20] PC_F=00002054 PC_ID=00002050 I0=00f6a023 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+*** PASSED *** after 557072 simulation cycles
+Total cycles: 557072
+Counter: dual_issued=0 lane1_issue_en=0 flush_id=65554 freeze=0
+Retired: lane0=491516 lane1=0 total=491516 IPC=0.882320

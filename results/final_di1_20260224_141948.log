@@ -1,0 +1,26 @@
+./obj_dir/Vriscv_top +loadmem=final.hex +max-cycles=500000000 
+Loaded 103 lines from final.hex
+[C1] PC_F=00002008 PC_ID=00002000 I0=00080137 I1=4dc000ef flush_id=0 freeze=0 dual_issued=1 lane1_issue_en=1
+[C2] PC_F=00002008 PC_ID=00002004 I0=4dc000ef I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C3] PC_F=00002010 PC_ID=00002008 I0=00000013 I1=00000013 flush_id=1 freeze=0 dual_issued=0 lane1_issue_en=0
+[C4] PC_F=000024e0 PC_ID=00002010 I0=00000013 I1=00000013 flush_id=1 freeze=0 dual_issued=0 lane1_issue_en=0
+[C5] PC_F=000024e8 PC_ID=000024e0 I0=ff010113 I1=00600513 flush_id=0 freeze=0 dual_issued=1 lane1_issue_en=1
+[C6] PC_F=000024f0 PC_ID=000024e8 I0=00112623 I1=b1dff0ef flush_id=0 freeze=0 dual_issued=1 lane1_issue_en=1
+[C7] PC_F=000024f0 PC_ID=000024ec I0=b1dff0ef I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C8] PC_F=000024f8 PC_ID=000024f0 I0=00000013 I1=00000013 flush_id=1 freeze=0 dual_issued=0 lane1_issue_en=0
+[C9] PC_F=00002008 PC_ID=000024f8 I0=00000013 I1=00000013 flush_id=1 freeze=0 dual_issued=0 lane1_issue_en=0
+[C10] PC_F=00002010 PC_ID=00002008 I0=f8010113 I1=06812c23 flush_id=0 freeze=0 dual_issued=1 lane1_issue_en=1
+[C11] PC_F=00002010 PC_ID=0000200c I0=06812c23 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C12] PC_F=00002018 PC_ID=00002010 I0=06112e23 I1=00100413 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C13] PC_F=00002018 PC_ID=00002014 I0=00100413 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C14] PC_F=00002020 PC_ID=00002018 I0=34a47c63 I1=ffe50793 flush_id=0 freeze=0 dual_issued=1 lane1_issue_en=1
+[C15] PC_F=00002028 PC_ID=00002020 I0=07412423 I1=07512223 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C16] PC_F=00002028 PC_ID=00002024 I0=07512223 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C17] PC_F=00002030 PC_ID=00002028 I0=05912a23 I1=ffe7f793 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C18] PC_F=00002030 PC_ID=0000202c I0=ffe7f793 I1=00000013 flush_id=0 freeze=0 dual_issued=0 lane1_issue_en=0
+[C19] PC_F=00002038 PC_ID=00002030 I0=ffd50713 I1=fff50a13 flush_id=0 freeze=0 dual_issued=1 lane1_issue_en=1
+[C20] PC_F=00002040 PC_ID=00002038 I0=40f70cb3 I1=00000a93 flush_id=0 freeze=0 dual_issued=1 lane1_issue_en=1
+*** TIMEOUT *** after 500000000 simulation cycles
+Total cycles: 500000000
+Counter: dual_issued=179104479 lane1_issue_en=179104479 flush_id=14925376 freeze=0
+Retired: lane0=485074622 lane1=126865670 total=611940292 IPC=1.223881

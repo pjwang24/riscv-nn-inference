@@ -1,0 +1,5 @@
+bench,dual_issue,status,tohost,cycles,ipc,retired_lane0,retired_lane1,retired_total,dual_issued,lane1_issue_en,flush_id,freeze
+fib,0,PASSED,,615,0.752846,463,0,463,0,0,150,0
+dual_ilp,0,PASSED,,84016,0.999714,83992,0,83992,0,0,22,0
+fib,1,PASSED,,614,0.754072,462,1,463,156,156,150,0
+dual_ilp,1,PASSED,,45098,1.862433,45074,38918,83992,40981,40981,22,0

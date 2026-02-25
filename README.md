@@ -18,6 +18,120 @@ That makes this workload a good target for
 The goal is not only to maximize a single benchmark number.
 The goal is to build a reproducible workflow where each optimization can be measured, validated, and traced from RTL behavior to end to end application impact.
 
+## System Microarchitecture
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px'}}}%%
+block-beta
+  columns 13
+
+  block:CPU["🔷 RV32IM Dual-Issue CPU (Riscv151)"]:5
+    columns 5
+    space:5
+    IF["IF\nFetch"]:1
+    space
+    ID["ID\nDecode"]:1
+    space
+    EX_WB["EX → WB"]:1
+    space:5
+    BHT["GShare\nBHT"]:1
+    space
+    RF["RegFile\n(4R/2W)"]:1
+    space
+    L0["Lane 0\nALU + MUL"]:1
+    BTB["Direct\nBTB"]:1
+    space
+    HZD["Dual Hazard\nUnit"]:1
+    space
+    L1["Lane 1\nALU"]:1
+  end
+
+  space
+
+  block:MEM["🔶 Memory Subsystem (Memory151)"]:3
+    columns 1
+    IC["I-Cache\n(64B line, 2-way SA)"]
+    DC["D-Cache / no_cache_mem\n+ DMA Port (256-bit)"]
+    ARB["Arbiter\n(IC / DC → Bus)"]
+    MAIN["Main Memory\n(ExtMemModel)"]
+  end
+
+  space
+
+  block:ACCEL["🟢 INT8 Matmul Accelerator"]:3
+    columns 1
+    FIFO["MMIO Cmd FIFO\n(256b × 4 deep)"]
+    DMA_ENG["DMA Engine\n(256-bit burst reads)"]
+    PE["4×4 PE Array\nLegacy: Outer-Product\nSystolic: Weight-Stationary"]
+    RESULT["Result Regs\nC[4][4] via MMIO read"]
+  end
+
+  IF --> IC
+  DC --> EX_WB
+  ARB --> MAIN
+
+  style CPU fill:#1a1a2e,color:#e0e0ff,stroke:#4a4aff,stroke-width:2px
+  style MEM fill:#2e1a00,color:#ffe0b0,stroke:#ff8c00,stroke-width:2px
+  style ACCEL fill:#002e1a,color:#b0ffe0,stroke:#00c853,stroke-width:2px
+  style IF fill:#283593,color:#fff
+  style ID fill:#283593,color:#fff
+  style EX_WB fill:#283593,color:#fff
+  style BHT fill:#1565c0,color:#fff
+  style BTB fill:#1565c0,color:#fff
+  style RF fill:#4527a0,color:#fff
+  style HZD fill:#4527a0,color:#fff
+  style L0 fill:#00695c,color:#fff
+  style L1 fill:#00695c,color:#fff
+  style IC fill:#e65100,color:#fff
+  style DC fill:#e65100,color:#fff
+  style ARB fill:#bf360c,color:#fff
+  style MAIN fill:#4e342e,color:#fff
+  style FIFO fill:#1b5e20,color:#fff
+  style DMA_ENG fill:#1b5e20,color:#fff
+  style PE fill:#004d40,color:#fff
+  style RESULT fill:#004d40,color:#fff
+```
+
+### Data Path and Interconnect
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                         riscv_top (SoC)                                         │
+│                                                                                                  │
+│  ┌─────────────────────────────────┐        ┌───────────────┐       ┌──────────────────────────┐ │
+│  │    RV32IM CPU (Riscv151)        │        │  Memory151    │       │  MatmulAccelerator       │ │
+│  │                                 │  icache│               │       │                          │ │
+│  │  ┌────┐  ┌────┐  ┌────┐ ┌────┐ │───addr─▶  ┌─────────┐  │       │  ┌────────────────────┐  │ │
+│  │  │ IF │─▶│ ID │─▶│ EX │▶│ WB │ │◀─64b───── │ I-Cache │  │       │  │   MMIO Cmd FIFO    │  │ │
+│  │  └──┬─┘  └──┬─┘  └──┬─┘ └──┬─┘ │  inst  │  └─────────┘  │       │  │  (256b × 4-deep)   │  │ │
+│  │  ┌──┴──┐ ┌──┴──┐ ┌──┴───┐  │   │        │               │       │  └────────┬───────────┘  │ │
+│  │  │GShare│ │ Reg │ │Lane 0│  │   │  dcache│  ┌─────────┐  │       │           │              │ │
+│  │  │ BHT │ │File │ │ALU+  │  │   │───addr─▶  │ D-Cache │  │       │  ┌────────▼───────────┐  │ │
+│  │  │     │ │4R/2W│ │ MUL  │  │   │◀─32b───── │/ no_mem │  │       │  │    DMA Engine       │  │ │
+│  │  │ BTB │ │     │ ├──────┤  │   │  data  │  │ + DMA   │──╋──256b─╋─▶│  (256-bit burst)    │  │ │
+│  │  └─────┘ │Dual │ │Lane 1│  │   │        │  └────┬────┘  │       │  └────────┬───────────┘  │ │
+│  │          │Hzd  │ │ ALU  │  │   │        │       │       │       │           │              │ │
+│  │          └─────┘ └──────┘  │   │        │  ┌────▼────┐  │       │  ┌────────▼───────────┐  │ │
+│  │                            │   │        │  │ Arbiter │  │       │  │  4×4 PE Array       │  │ │
+│  └────────────────────────────┘   │        │  └────┬────┘  │       │  │                    │  │ │
+│           │                       │        │       │       │       │  │  Legacy: Outer-    │  │ │
+│           │ addr[31]=1 (MMIO)     │        │  ┌────▼────┐  │       │  │    Product Engine   │  │ │
+│           └───────────────────────╋────────╋──▶ Main Mem│  │       │  │  Systolic: Weight-  │  │ │
+│                                   │        │  │(ExtMem) │  │       │  │    Stationary Array │  │ │
+│                mmio_we/re ────────╋────────╋──╋─────────╋──╋───────╋─▶│                    │  │ │
+│                mmio_rdata ◀───────╋────────╋──╋─────────╋──╋───────╋──│  C[4][4] results   │  │ │
+│                                   │        │  └─────────┘  │       │  │  readable via MMIO  │  │ │
+│                                   │        └───────────────┘       │  └────────────────────┘  │ │
+│                                   │                                └──────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+ Key signals:
+   CPU ──icache_addr──▶ Memory151 ──64b inst──▶ CPU          (instruction fetch, 64-bit for dual-issue)
+   CPU ──dcache_addr──▶ Memory151 ──32b data──▶ CPU          (load/store path, addr[31]=0)
+   CPU ──mmio_we/re───▶ Accelerator ──rdata──▶ CPU           (MMIO control, addr[31]=1)
+   Accelerator ──dma_addr──▶ Memory151 ──256b──▶ Accelerator  (DMA bulk data path, bypasses CPU)
+```
+
 ## Scope
 
 - CPU and SoC RTL source is referenced from `../asic-project-fa25-golden-gates/src` by default in this repo `Makefile`
