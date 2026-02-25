@@ -1,131 +1,110 @@
-# Bare-Metal MNIST Inference on a Custom RISC-V + INT8 Matmul Accelerator
+# Bare-Metal MNIST Inference on Custom RV32IM CPU and Matmul Accelerator
 
-End-to-end inference on a custom RV32IM core with a hardware matmul accelerator, verified in cycle-accurate Verilator simulation and pushed through a Sky130 OpenLane flow.
+This repository is the integration and simulation workspace for bare-metal MNIST inference on a custom RISC-V core and hardware accelerator.
 
-## Latest Verified Result
+## Scope
 
-Current local run (`make run`, Feb 18, 2026):
+- CPU and SoC RTL source lives in `/Users/peter/asic-project-fa25-golden-gates/src`
+- This repo provides
+  - software workload `inference_bare.c`
+  - accelerator RTL wrapper and implementations in `riscv-accelerator/`
+  - Verilator harness `sim_main.cpp`
+  - OpenLane workspace in `OpenLane/`
 
-```text
-Loaded 11619 lines from inference.hex
-*** PASSED *** after 1999813 simulation cycles
-Total cycles: 1999813
-```
+## Current Accelerator Modes
 
-| Metric | Value |
-|---|---|
-| ISA | RV32IM (+ Zicsr in toolchain flags) |
-| CPU pipeline | 4-stage (IF, ID, EX, WB) |
-| Accelerator | Decoupled 4x4 INT8 outer-product matmul engine, DMA-fed |
-| Workload | 100 MNIST images, 2-layer MLP (784 -> 128 -> 10) |
-| Accuracy | 100/100 correct in current test set |
-| Cycles | 1,999,813 total (~19,998 cycles/image) |
-| Speedup vs unoptimized baseline (48,886,157 cycles) | 24.45x |
-| Binary size | ~190 KB ELF / ~182 KB raw bin |
+`riscv-accelerator/MatmulAccelerator.sv` selects one implementation at compile time
 
-## What Is In This Repo vs Sibling Repos
+- Legacy path default
+  - `riscv-accelerator/legacy/MatmulAcceleratorLegacy.sv`
+  - DMA-fed 4x4 outer-product style engine
+  - prints `ACCEL_PERF ...`
 
-This repo (`/Users/peter/verilator`) is the integration and simulation workspace:
-- `inference_bare.c`: bare-metal runtime and accelerator driver.
-- `riscv-accelerator/MatmulAccelerator.sv`: custom accelerator RTL.
-- `sim_main.cpp`: Verilator harness that loads `inference.hex` at reset PC base `0x2000`.
-- `OpenLane/`: local OpenLane flow checkout used for Sky130 implementation experiments.
+- Systolic path optional
+  - enable with `EXTRA_VFLAGS="-DUSE_SYSTOLIC_ACCEL"`
+  - `riscv-accelerator/systolic/MatmulAcceleratorSystolic.sv`
+  - prints `ACCEL_PERF_SYSTOLIC ...`
+  - currently modeled as a simplified systolic command timing path and not yet DMA-fed for operand movement in this branch
 
-Sibling repos used by this flow:
-- `/Users/peter/asic-project-fa25-golden-gates`: CPU + SoC RTL (`src/Riscv151.v`, `src/riscv_top.v`, pipeline stages, memory subsystem).
+## Verified Results
 
-Also vendored into this repo:
-- `riscv-ml-inference/`: model training/export pipeline (`train/train_and_export.py`, `runtime/weights.h`, `runtime/test_images.h`).
-
-## Architecture Snapshot
-
-### CPU
-- 4-stage pipeline with clear stage split so decode, execute, and writeback are no longer collapsed.
-- IF stage handles PC generation, instruction fetch, and branch prediction lookups.
-- ID stage handles decode, register read, hazard checks, and forwarding select decisions.
-- EX stage handles ALU, branch resolution, and RV32M multiply/divide execution.
-- WB stage handles memory-return path and final register writeback.
-- Hazard behavior includes forwarding for common RAW cases, one-cycle load-use bubbles, and a mispredict flush path.
-
-### Accelerator (`riscv-accelerator/MatmulAccelerator.sv`)
-- MMIO base: `0x80000000`.
-- Computes a 4x4 output tile (`int32` accumulators) from packed INT8 vectors.
-- Uses outer-product accumulation over K in 4-element chunks: `C_tile += A_step(4x1) x B_step(1x4)`.
-- Each compute step performs up to 16 INT8 multiplies and accumulates into 16 INT32 cells.
-- Reads 128-bit chunks through DMA interface.
-- Command FIFO decouples software launch from execution.
-- Result registers: `0x18` to `0x54`.
-- Added control for strided input traversal:
-  - `0x58`: `X_STRIDE`
-  - `0x5C`: `K_ROW_LEN`
-
-## End-to-End Execution Path
-
-1. PyTorch script in `riscv-ml-inference/train/train_and_export.py` trains and exports quantized INT8 weights/test vectors.
-2. `inference_bare.c` compiles into a flat bare-metal image (`inference.hex`) with weights in `.rodata`.
-3. `sim_main.cpp` loads the image into simulated SRAM at reset base `0x2000`.
-4. CPU executes the inference loop and launches accelerator commands through MMIO.
-5. Accelerator DMA reads packed activations/weights, performs 4x4 outer-product accumulation, and exposes tile results via MMIO.
-6. Runtime applies bias/rescale/argmax and reports PASS/FAIL through CSR `0x51e`.
-
-### Software Runtime (`inference_bare.c`)
-- No OS, no libc startup (`-nostdlib -nostartfiles`).
-- Packed INT8 data layout for accelerator-friendly access.
-- Batch size 4 inference loop.
-- Pass/fail signaling via CSR `0x51e` (`tohost` convention in testbench).
-
-## Performance Progression (Consistent Timeline)
-
-Historical cycle counts from improvement logs and current run:
-
-| Stage | Cycles | Speedup vs baseline |
-|---|---:|---:|
-| Baseline (unoptimized SW) | 48,886,157 | 1.00x |
-| + Software optimizations (`-O3`, fused ops, reciprocal scaling) | 44,830,519 | 1.09x |
-| + Pipeline/branch fixes | 44,830,278 | 1.09x |
-| + V1 accelerator (shared 32-bit dcache path) | 6,698,993 | 7.30x |
-| + Separate 128-bit DMA + batched inference | 2,914,655 | 16.77x |
-| + 4-stage pipeline refactor | 3,007,447 | 16.26x |
-| + Phase-2 accelerator/MMIO/driver fixes (current) | 1,999,813 | 24.45x |
-
-Derived throughput at the current point:
-- Total MACs: ~10.16M (100 images x (100,352 + 1,280)).
-- Effective throughput: ~0.197 cycles/MAC.
-
-Detailed logs live in:
-- `improvements/2026-02-15.md`
-- `improvements/2026-02-16.md`
-- `improvements/2026-02-18.md`
-
-## Why The Latest Jump Happened
-
-The latest acceleration came from correctness and interface fixes, not just adding more hardware:
-- MMIO map synchronization (results moved to `0x18` and kept separate from config regs).
-- Packed-weight bug fix (`w0..w3` packing correctness and casting discipline).
-- Correct block addressing in software (`blk * K * 4` style offsets).
-- Correct `K` dimension passed to accelerator (previously truncated behavior).
-- Driver hardening and queue-safe launch/poll behavior.
-
-## Open-Source Toolchain Used
-
-This project was built entirely with open-source tooling:
-- Verilator for cycle-accurate RTL simulation.
-- RISC-V GNU toolchain (`riscv64-unknown-elf-gcc/objcopy/objdump`) for bare-metal binaries.
-- OpenLane flow (local checkout in this repo) for RTL-to-GDS flow orchestration.
-- OpenLane components: OpenROAD, Yosys, Magic, Netgen, KLayout, CVC, SPEF extractor.
-- Sky130 PDK for physical-design experiments.
-
-## Local Docker-Based Sky130 Flow
-
-OpenLane is run locally in Docker containers:
+Verified on February 25 2026 with
 
 ```bash
-cd OpenLane
-make mount
-./flow.tcl -design riscv_top -to synthesis
+cd /Users/peter/riscv-nn-inference
 ```
 
-Full place-and-route attempt:
+### Legacy accelerator
+
+```bash
+make clean && make run ENABLE_DUAL_ISSUE=0
+make clean && make run ENABLE_DUAL_ISSUE=1
+```
+
+| Mode | Total cycles | Retired IPC | Status |
+|---|---:|---:|---|
+| SI | 1496975 | 0.895807 | PASSED |
+| DI | 1343765 | 0.997669 | PASSED |
+
+Representative legacy perf line
+
+```text
+ACCEL_PERF cmd=1 k_limit=196 busy=398 compute=196 stall=192 fill=394 dma_req=392 produced=196 consumed=196 occ0=196 occ1=196 occ2=3 occ_max=2 ...
+```
+
+### Systolic accelerator
+
+```bash
+make clean && make run ENABLE_DUAL_ISSUE=0 EXTRA_VFLAGS="-DUSE_SYSTOLIC_ACCEL"
+make clean && make run ENABLE_DUAL_ISSUE=1 EXTRA_VFLAGS="-DUSE_SYSTOLIC_ACCEL"
+```
+
+| Mode | Total cycles | Retired IPC | Status |
+|---|---:|---:|---|
+| SI | 1338227 | 0.913079 | PASSED |
+| DI | 1184508 | 1.031573 | PASSED |
+
+Representative systolic perf line
+
+```text
+ACCEL_PERF_SYSTOLIC cmd=1 k_limit=196 busy=205 compute=196 stall=9 dma_req=0
+```
+
+## Build and Run
+
+Default run uses legacy accelerator and dual issue enabled by default in `Makefile`
+
+```bash
+make clean
+make run
+```
+
+Useful knobs
+
+- `ENABLE_DUAL_ISSUE=0|1` controls CPU dual issue define
+- `EXTRA_VFLAGS="-DUSE_SYSTOLIC_ACCEL"` selects systolic accelerator path
+- `CFLAGS_EXTRA="..."` passes workload compile-time flags
+- `EXTRA_FLAGS="..."` passes simulator plusargs
+
+## Key Files
+
+- `Makefile` build and run entry point
+- `inference_bare.c` bare-metal MNIST runtime and accelerator driver
+- `sim_main.cpp` hex loader and simulation harness
+- `riscv-accelerator/MatmulAccelerator.sv` implementation selector
+- `riscv-accelerator/legacy/MatmulAcceleratorLegacy.sv` legacy accelerator
+- `riscv-accelerator/systolic/MatmulAcceleratorSystolic.sv` systolic accelerator
+- `improvements/` dated engineering logs
+
+## Notes on Accuracy and Reproducibility
+
+- Cycle count and IPC depend on selected accelerator mode and compile flags
+- Always report the exact command line with `ENABLE_DUAL_ISSUE` and `EXTRA_VFLAGS`
+- The simulator load base and tohost behavior are defined in `sim_main.cpp` and the runtime code
+
+## OpenLane
+
+The OpenLane workspace in this repo is used for physical design experiments
 
 ```bash
 cd OpenLane
@@ -133,51 +112,4 @@ make mount
 ./flow.tcl -design riscv_top
 ```
 
-## Sky130 Status (Current, Honest State)
-
-From recent OpenLane PAR artifacts in this workspace:
-
-| Metric | Current observation |
-|---|---|
-| Run | `sram_run_par` |
-| Die area | 1.44 mm^2 (1200 um x 1200 um floorplan) |
-| Core area | 1,399,932.65 um^2 |
-| OpenDP utilization | 22.9% |
-| Synthesized cell count | 21,507 |
-| Total cells after fill/tap/decap | 115,402 |
-| RCX SPEF timing | WNS 0.00 ns, TNS 0.00 ns at 20 ns clock |
-| Suggested frequency from this run | ~50 MHz |
-| Flow status | Marked failed at Magic GDS pointer stage (`gds_ptrs`), after routing/signoff reports were generated |
-
-Additional exploratory run:
-- `RUN_2026.02.18_07.35.00` kept the same 1.44 mm^2 area with higher density (OpenDP 28.45%).
-- RCX SPEF timing there was near-close at 17 ns target with `spef_wns = -0.36 ns` and `spef_tns = -1.79 ns`.
-- The same late Magic `gds_ptrs` step failure marked the flow as failed.
-
-Interpretation:
-- The design is functionally strong in RTL/simulation.
-- Physical implementation quality is significantly better than the old 4 mm^2 snapshot and now reaches completed routing and signoff report generation in 1.44 mm^2 runs.
-- Remaining blockers are late flow robustness issues and final timing margin at tighter clock targets.
-
-## Reproduce The Simulation Result
-
-1. Ensure toolchain dependencies are installed:
-   - Verilator
-   - `riscv64-unknown-elf-*`
-   - Python 3
-2. Check local path settings in `Makefile`:
-   - `RTL_DIR`
-   - `INFER_DIR`
-   - `START_S`
-3. Build and run:
-
-```bash
-make clean
-make run
-```
-
-Expected: `*** PASSED *** after 1999813 simulation cycles` (or very close, depending on exact binary/image revision).
-
-## Acknowledgment
-
-Special thanks to Tingyao Huang for major CPU-core development contributions used in this end-to-end flow.
+Use generated run logs and reports under `OpenLane/designs/riscv_top/runs/` for timing and routing status

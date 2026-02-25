@@ -25,8 +25,14 @@ module MatmulAcceleratorSystolic (
 
     reg busy_r;
     reg done_r;
+    reg prev_busy_r;
     reg [31:0] run_count;
     reg [31:0] k_limit;
+    reg [31:0] cmd_seq;
+    reg [31:0] busy_cycles;
+    reg [31:0] compute_cycles;
+    reg [31:0] compute_stall_cycles;
+    reg [31:0] dma_req_count;
 
     logic clear_acc;
     logic en;
@@ -78,9 +84,16 @@ module MatmulAcceleratorSystolic (
             shadow_k_row_len <= 32'd0;
             busy_r <= 1'b0;
             done_r <= 1'b0;
+            prev_busy_r <= 1'b0;
             run_count <= 32'd0;
             k_limit <= 32'd0;
+            cmd_seq <= 32'd0;
+            busy_cycles <= 32'd0;
+            compute_cycles <= 32'd0;
+            compute_stall_cycles <= 32'd0;
+            dma_req_count <= 32'd0;
         end else begin
+            prev_busy_r <= busy_r;
             if (mmio_wr) begin
                 case (reg_offset)
                     8'h04: shadow_w_addr <= mmio_wdata;
@@ -96,6 +109,11 @@ module MatmulAcceleratorSystolic (
                             done_r <= 1'b0;
                             run_count <= 32'd0;
                             k_limit <= (shadow_k_dim + 32'd3) >> 2;
+                            cmd_seq <= cmd_seq + 32'd1;
+                            busy_cycles <= 32'd0;
+                            compute_cycles <= 32'd0;
+                            compute_stall_cycles <= 32'd0;
+                            dma_req_count <= 32'd0;
                         end
                     end
                     default: begin
@@ -105,11 +123,26 @@ module MatmulAcceleratorSystolic (
 
             if (busy_r) begin
                 run_count <= run_count + 32'd1;
+                busy_cycles <= busy_cycles + 32'd1;
+                if (run_count < k_limit) begin
+                    compute_cycles <= compute_cycles + 32'd1;
+                end else begin
+                    compute_stall_cycles <= compute_stall_cycles + 32'd1;
+                end
+                if (dma_re) begin
+                    dma_req_count <= dma_req_count + 32'd1;
+                end
                 // Conservative completion model for now. Prevents deadlock if selected.
                 if (run_count >= (k_limit + 32'd8)) begin
                     busy_r <= 1'b0;
                     done_r <= 1'b1;
                 end
+            end
+
+            if (prev_busy_r && !busy_r) begin
+                $display("ACCEL_PERF_SYSTOLIC cmd=%0d k_limit=%0d busy=%0d compute=%0d stall=%0d dma_req=%0d",
+                         cmd_seq, k_limit, busy_cycles, compute_cycles,
+                         compute_stall_cycles, dma_req_count);
             end
         end
     end
