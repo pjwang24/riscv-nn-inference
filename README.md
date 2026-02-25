@@ -22,6 +22,7 @@ The goal is to build a reproducible workflow where each optimization can be meas
 
 ![System Architecture Diagram](arch-diagram.svg)
 
+<!--
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                         riscv_top (SoC)                                          │
@@ -57,6 +58,7 @@ The goal is to build a reproducible workflow where each optimization can be meas
    CPU ──mmio_we/re───▶ Accelerator ──rdata──▶ CPU           (MMIO control, addr[31]=1)
    Accelerator ──dma_addr──▶ Memory151 ──256b──▶ Accelerator  (DMA bulk data path, bypasses CPU)
 ```
+-->
 
 ## Scope
 
