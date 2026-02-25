@@ -1,0 +1,215 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" font-family="'Courier New', Consolas, monospace" font-size="13">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8890a8"/>
+    </marker>
+    <marker id="arr-amber" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#e8a735"/>
+    </marker>
+    <marker id="arr-green" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/>
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#818cf8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="780" rx="8" fill="#0d1117"/>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--            SoC Outer Frame            -->
+  <!-- ══════════════════════════════════════ -->
+  <rect x="20" y="20" width="1160" height="740" rx="6" fill="none" stroke="#30363d" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="600" y="48" text-anchor="middle" fill="#c9d1d9" font-size="16" font-weight="bold">riscv_top (SoC)</text>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--         CPU Block (Left)              -->
+  <!-- ══════════════════════════════════════ -->
+  <rect x="40" y="70" width="410" height="420" rx="5" fill="#111827" stroke="#6366f1" stroke-width="1.5" opacity="0.95"/>
+  <rect x="40" y="70" width="410" height="28" rx="5" fill="#6366f1" opacity="0.15"/>
+  <text x="245" y="90" text-anchor="middle" fill="#a5b4fc" font-size="14" font-weight="bold">RV32IM CPU (Riscv151)</text>
+
+  <!-- Pipeline: IF → ID → EX → WB -->
+  <g transform="translate(65, 115)">
+    <rect width="70" height="38" rx="4" fill="#1e1b4b" stroke="#4f46e5" stroke-width="1"/>
+    <text x="35" y="24" text-anchor="middle" fill="#c7d2fe" font-size="13" font-weight="bold">IF</text>
+    <line x1="70" y1="19" x2="90" y2="19" stroke="#818cf8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+
+    <rect x="90" width="70" height="38" rx="4" fill="#1e1b4b" stroke="#4f46e5" stroke-width="1"/>
+    <text x="125" y="24" text-anchor="middle" fill="#c7d2fe" font-size="13" font-weight="bold">ID</text>
+    <line x1="160" y1="19" x2="180" y2="19" stroke="#818cf8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+
+    <rect x="180" width="70" height="38" rx="4" fill="#1e1b4b" stroke="#4f46e5" stroke-width="1"/>
+    <text x="215" y="24" text-anchor="middle" fill="#c7d2fe" font-size="13" font-weight="bold">EX</text>
+    <line x1="250" y1="19" x2="270" y2="19" stroke="#818cf8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+
+    <rect x="270" width="70" height="38" rx="4" fill="#1e1b4b" stroke="#4f46e5" stroke-width="1"/>
+    <text x="305" y="24" text-anchor="middle" fill="#c7d2fe" font-size="13" font-weight="bold">WB</text>
+  </g>
+
+  <!-- GShare BHT -->
+  <rect x="65" y="180" width="100" height="52" rx="4" fill="#1a1a2e" stroke="#4338ca" stroke-width="1"/>
+  <text x="115" y="201" text-anchor="middle" fill="#a5b4fc" font-size="11" font-weight="bold">GShare</text>
+  <text x="115" y="220" text-anchor="middle" fill="#7c86a8" font-size="11">BHT</text>
+
+  <!-- BTB -->
+  <rect x="65" y="245" width="100" height="42" rx="4" fill="#1a1a2e" stroke="#4338ca" stroke-width="1"/>
+  <text x="115" y="272" text-anchor="middle" fill="#a5b4fc" font-size="11" font-weight="bold">BTB</text>
+
+  <!-- Reg File -->
+  <rect x="185" y="180" width="100" height="52" rx="4" fill="#1a1a2e" stroke="#4338ca" stroke-width="1"/>
+  <text x="235" y="198" text-anchor="middle" fill="#a5b4fc" font-size="11" font-weight="bold">Reg File</text>
+  <text x="235" y="220" text-anchor="middle" fill="#7c86a8" font-size="11">4R / 2W</text>
+
+  <!-- Dual Hazard -->
+  <rect x="185" y="245" width="100" height="42" rx="4" fill="#1a1a2e" stroke="#4338ca" stroke-width="1"/>
+  <text x="235" y="262" text-anchor="middle" fill="#a5b4fc" font-size="11" font-weight="bold">Dual Hzd</text>
+  <text x="235" y="278" text-anchor="middle" fill="#7c86a8" font-size="10">fwd + stall</text>
+
+  <!-- Lane 0 ALU+MUL -->
+  <rect x="305" y="180" width="120" height="52" rx="4" fill="#1a1a2e" stroke="#4338ca" stroke-width="1"/>
+  <text x="365" y="198" text-anchor="middle" fill="#a5b4fc" font-size="11" font-weight="bold">Lane 0</text>
+  <text x="365" y="220" text-anchor="middle" fill="#7c86a8" font-size="11">ALU + MUL</text>
+
+  <!-- Lane 1 ALU -->
+  <rect x="305" y="245" width="120" height="42" rx="4" fill="#1a1a2e" stroke="#4338ca" stroke-width="1"/>
+  <text x="365" y="262" text-anchor="middle" fill="#a5b4fc" font-size="11" font-weight="bold">Lane 1</text>
+  <text x="365" y="278" text-anchor="middle" fill="#7c86a8" font-size="11">ALU</text>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--       Memory Block (Center)           -->
+  <!-- ══════════════════════════════════════ -->
+  <rect x="500" y="70" width="250" height="570" rx="5" fill="#1a1308" stroke="#d97706" stroke-width="1.5" opacity="0.95"/>
+  <rect x="500" y="70" width="250" height="28" rx="5" fill="#d97706" opacity="0.12"/>
+  <text x="625" y="90" text-anchor="middle" fill="#fbbf24" font-size="14" font-weight="bold">Memory151</text>
+
+  <!-- I-Cache -->
+  <rect x="540" y="140" width="170" height="55" rx="4" fill="#1c1708" stroke="#b45309" stroke-width="1"/>
+  <text x="625" y="163" text-anchor="middle" fill="#fcd34d" font-size="12" font-weight="bold">I-Cache</text>
+  <text x="625" y="182" text-anchor="middle" fill="#a08a50" font-size="10">64B line · 2-way SA</text>
+
+  <!-- D-Cache -->
+  <rect x="540" y="290" width="170" height="70" rx="4" fill="#1c1708" stroke="#b45309" stroke-width="1"/>
+  <text x="625" y="313" text-anchor="middle" fill="#fcd34d" font-size="12" font-weight="bold">D-Cache</text>
+  <text x="625" y="330" text-anchor="middle" fill="#a08a50" font-size="10">/ no_cache_mem</text>
+  <text x="625" y="348" text-anchor="middle" fill="#a08a50" font-size="10">+ DMA Port</text>
+
+  <!-- Arbiter -->
+  <rect x="560" y="440" width="130" height="42" rx="4" fill="#1c1708" stroke="#b45309" stroke-width="1"/>
+  <text x="625" y="466" text-anchor="middle" fill="#fcd34d" font-size="12" font-weight="bold">Arbiter</text>
+
+  <!-- Main Memory -->
+  <rect x="540" y="545" width="170" height="55" rx="4" fill="#1c1708" stroke="#b45309" stroke-width="1"/>
+  <text x="625" y="568" text-anchor="middle" fill="#fcd34d" font-size="12" font-weight="bold">Main Mem</text>
+  <text x="625" y="585" text-anchor="middle" fill="#a08a50" font-size="10">(ExtMemModel)</text>
+
+  <!-- I-Cache → Arbiter -->
+  <line x1="625" y1="195" x2="625" y2="290" stroke="#92702a" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="608" y1="395" x2="608" y2="440" stroke="#92702a" stroke-width="1.2" marker-end="url(#arr-amber)"/>
+  <line x1="642" y1="360" x2="642" y2="440" stroke="#92702a" stroke-width="1.2" marker-end="url(#arr-amber)"/>
+  <!-- Arbiter → Main Mem -->
+  <line x1="625" y1="482" x2="625" y2="545" stroke="#92702a" stroke-width="1.2" marker-end="url(#arr-amber)"/>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--      Accelerator Block (Right)        -->
+  <!-- ══════════════════════════════════════ -->
+  <rect x="800" y="70" width="350" height="570" rx="5" fill="#071a12" stroke="#059669" stroke-width="1.5" opacity="0.95"/>
+  <rect x="800" y="70" width="350" height="28" rx="5" fill="#059669" opacity="0.12"/>
+  <text x="975" y="90" text-anchor="middle" fill="#6ee7b7" font-size="14" font-weight="bold">MatmulAccelerator</text>
+
+  <!-- MMIO Cmd FIFO -->
+  <rect x="850" y="130" width="250" height="55" rx="4" fill="#0a2018" stroke="#047857" stroke-width="1"/>
+  <text x="975" y="153" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="bold">MMIO Cmd FIFO</text>
+  <text x="975" y="172" text-anchor="middle" fill="#5a9a7a" font-size="10">(256b × 4-deep)</text>
+
+  <!-- DMA Engine -->
+  <rect x="850" y="245" width="250" height="55" rx="4" fill="#0a2018" stroke="#047857" stroke-width="1"/>
+  <text x="975" y="268" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="bold">DMA Engine</text>
+  <text x="975" y="287" text-anchor="middle" fill="#5a9a7a" font-size="10">(256-bit burst reads)</text>
+
+  <!-- 4×4 PE Array -->
+  <rect x="850" y="370" width="250" height="90" rx="4" fill="#0a2018" stroke="#047857" stroke-width="1"/>
+  <text x="975" y="398" text-anchor="middle" fill="#6ee7b7" font-size="13" font-weight="bold">4×4 PE Array</text>
+  <text x="975" y="420" text-anchor="middle" fill="#5a9a7a" font-size="10">Legacy: Outer-Product</text>
+  <text x="975" y="436" text-anchor="middle" fill="#5a9a7a" font-size="10">Systolic: Weight-Stationary</text>
+
+  <!-- Result Regs -->
+  <rect x="850" y="520" width="250" height="55" rx="4" fill="#0a2018" stroke="#047857" stroke-width="1"/>
+  <text x="975" y="543" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="bold">C[4][4] Results</text>
+  <text x="975" y="562" text-anchor="middle" fill="#5a9a7a" font-size="10">readable via MMIO</text>
+
+  <!-- Accel vertical arrows -->
+  <line x1="975" y1="185" x2="975" y2="245" stroke="#34d399" stroke-width="1.2" marker-end="url(#arr-green)"/>
+  <line x1="975" y1="300" x2="975" y2="370" stroke="#34d399" stroke-width="1.2" marker-end="url(#arr-green)"/>
+  <line x1="975" y1="460" x2="975" y2="520" stroke="#34d399" stroke-width="1.2" marker-end="url(#arr-green)"/>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--         CPU ↔ I-Cache Signals         -->
+  <!-- ══════════════════════════════════════ -->
+  <!-- addr → -->
+  <line x1="450" y1="148" x2="540" y2="148" stroke="#8890a8" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="483" y="141" text-anchor="middle" fill="#8b949e" font-size="10">addr</text>
+  <!-- ← 64b inst -->
+  <line x1="540" y1="172" x2="450" y2="172" stroke="#8890a8" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="483" y="188" text-anchor="middle" fill="#8b949e" font-size="10">64b inst</text>
+  <!-- icache label -->
+  <text x="460" y="125" fill="#7c86a8" font-size="10" font-style="italic">icache</text>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--        CPU ↔ D-Cache Signals          -->
+  <!-- ══════════════════════════════════════ -->
+  <!-- addr → -->
+  <line x1="450" y1="310" x2="540" y2="310" stroke="#8890a8" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="483" y="303" text-anchor="middle" fill="#8b949e" font-size="10">addr</text>
+  <!-- ← 32b data -->
+  <line x1="540" y1="340" x2="450" y2="340" stroke="#8890a8" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="483" y="356" text-anchor="middle" fill="#8b949e" font-size="10">32b data</text>
+  <!-- dcache label -->
+  <text x="460" y="293" fill="#7c86a8" font-size="10" font-style="italic">dcache</text>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--      D-Cache ↔ DMA Engine (256b)      -->
+  <!-- ══════════════════════════════════════ -->
+  <line x1="710" y1="272" x2="850" y2="272" stroke="#e8a735" stroke-width="1.8" marker-start="url(#arr-amber)" marker-end="url(#arr-amber)"/>
+  <rect x="740" y="256" width="60" height="18" rx="3" fill="#0d1117"/>
+  <text x="770" y="269" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="bold">256b</text>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--       MMIO Bus (bottom, CPU↔Accel)    -->
+  <!-- ══════════════════════════════════════ -->
+  <!-- mmio_we / mmio_re -->
+  <line x1="245" y1="490" x2="245" y2="700" stroke="#6366f1" stroke-width="1" opacity="0.4"/>
+  <line x1="245" y1="700" x2="975" y2="700" stroke="#8890a8" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="140" y="698" fill="#8b949e" font-size="10">mmio_we / re</text>
+
+  <!-- mmio_rdata -->
+  <line x1="300" y1="490" x2="300" y2="725" stroke="#6366f1" stroke-width="1" opacity="0.4"/>
+  <line x1="975" y1="725" x2="300" y2="725" stroke="#8890a8" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="155" y="723" fill="#8b949e" font-size="10">mmio_rdata</text>
+
+  <!-- Accel down to MMIO bus -->
+  <line x1="975" y1="575" x2="975" y2="700" stroke="#34d399" stroke-width="1" opacity="0.4"/>
+
+  <!-- MMIO bus passes through memory region (vertical ticks) -->
+  <line x1="625" y1="694" x2="625" y2="706" stroke="#60605a" stroke-width="1.5"/>
+  <line x1="625" y1="719" x2="625" y2="731" stroke="#60605a" stroke-width="1.5"/>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--    CPU → Main Memory (bottom path)    -->
+  <!-- ══════════════════════════════════════ -->
+  <line x1="170" y1="490" x2="170" y2="572" stroke="#6366f1" stroke-width="1" opacity="0.4"/>
+  <line x1="170" y1="572" x2="540" y2="572" stroke="#8890a8" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════ -->
+  <!--           Spec Footer Bar             -->
+  <!-- ══════════════════════════════════════ -->
+  <g transform="translate(600, 770)">
+    <text x="-440" y="0" fill="#484f58" font-size="10">ISA: RV32IM</text>
+    <text x="-300" y="0" fill="#484f58" font-size="10">│ 2-wide issue</text>
+    <text x="-170" y="0" fill="#484f58" font-size="10">│ 4-stage pipeline</text>
+    <text x="-10" y="0" fill="#484f58" font-size="10">│ 256-bit mem bus</text>
+    <text x="160" y="0" fill="#484f58" font-size="10">│ INT8 WS systolic</text>
+    <text x="340" y="0" fill="#484f58" font-size="10">│ EECS 151 ASIC</text>
+  </g>
+</svg>

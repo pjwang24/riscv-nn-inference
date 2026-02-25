@@ -20,7 +20,7 @@ The goal is to build a reproducible workflow where each optimization can be meas
 
 ### Data Path and Interconnect
 
-![System Architecture Diagram](arch-diagram.png)
+![System Architecture Diagram](arch-diagram.svg)
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
